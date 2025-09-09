@@ -350,9 +350,9 @@ def do_gn_ticket():
                 progress_session_id,
                 profile.get('airtable_api_key'),
                 profile.get('totp_secret'),
-                headless_mode=headless_mode_enabled, # This will control browser visibility
-                allow_manual_site_selection=True, # Explicitly enable manual intervention
-                chatgpt_api_key=profile.get('chatgpt_api_key') or CONFIG.get('CHATGPT_API_KEY')
+                headless_mode=headless_mode_enabled,  # This will control browser visibility
+                allow_manual_site_selection=True,  # Explicitly enable manual intervention
+                chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY')
             )
         except Exception as e:
             set_progress(progress_session_id, f"Critical error during booking: {str(e)}", status="error")
@@ -379,8 +379,7 @@ def setup_profile():
         profile_data = {
             'airtable_api_key': request.form.get('airtable_api_key', '').strip(),
             'servicenow_password': request.form.get('servicenow_password', '').strip(),
-            'totp_secret': request.form.get('totp_secret', '').strip().replace(' ', ''),
-            'chatgpt_api_key': request.form.get('chatgpt_api_key', '').strip(),
+            'totp_secret': request.form.get('totp_secret', '').strip().replace(' ', '')
         }
         required_fields = ['airtable_api_key', 'servicenow_password', 'totp_secret']
         if not all(profile_data[field] for field in required_fields):
