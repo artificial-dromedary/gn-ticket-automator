@@ -119,6 +119,11 @@ if [ $? -eq 0 ]; then
     echo "✅ Found backup script, adding to stage."
     cp "$BACKUP_SCRIPT_SOURCE_PATH" "$DMG_STAGING_DIR/"
 
+    # Remove quarantine attribute so the AppleScript runs without warnings
+    if command -v xattr >/dev/null 2>&1; then
+        xattr -d com.apple.quarantine "$DMG_STAGING_DIR/$BACKUP_SCRIPT_NAME" 2>/dev/null || true
+    fi
+
 
     # --- CREATE THE CUSTOM DMG ---
     DMG_NAME="GN_Ticket_Automator_v${VERSION}.dmg"

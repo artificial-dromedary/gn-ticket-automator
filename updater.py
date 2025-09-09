@@ -261,6 +261,18 @@ if [ -z "$MOUNT_POINT" ]; then
 fi
 echo "DMG mounted at: $MOUNT_POINT"
 
+# --- Backup user profile data ---
+PROFILE_DIR="$HOME/GN_Ticket_Automator"
+PROFILE_DB="$PROFILE_DIR/user_profiles.db"
+BACKUP_DB="/tmp/user_profiles.db.bak"
+
+if [ -f "$PROFILE_DB" ]; then
+    echo "Backing up user profiles..."
+    cp "$PROFILE_DB" "$BACKUP_DB"
+else
+    echo "No user profile data found to back up."
+fi
+
 # --- Find the .app bundle in the DMG ---
 SOURCE_APP=$(find "$MOUNT_POINT" -name "*.app" -maxdepth 1 | head -n 1)
 if [ -z "$SOURCE_APP" ]; then
@@ -283,10 +295,21 @@ echo "Copying new application to $APP_PATH"
 cp -R "$SOURCE_APP" "$APP_PATH"
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to copy new application."
+    if [ -f "$BACKUP_DB" ]; then
+        mv "$BACKUP_DB" "$PROFILE_DB"
+        echo "Restored user profiles after failed update."
+    fi
     hdiutil detach "$MOUNT_POINT"
     exit 1
 fi
 echo "Application copied successfully."
+
+# --- Restore user profile data ---
+if [ -f "$BACKUP_DB" ]; then
+    echo "Restoring user profiles..."
+    mkdir -p "$PROFILE_DIR"
+    mv "$BACKUP_DB" "$PROFILE_DB"
+fi
 
 # --- CRITICAL: Remove quarantine attribute ---
 echo "Removing quarantine attributes..."
