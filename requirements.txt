@@ -1,0 +1,36 @@
+# Flask and web framework dependencies
+Flask>=2.3.0
+Flask-Session>=0.5.0
+
+# Google OAuth dependencies (Updated to resolve client_secret error)
+# Using '>=1.2.0' for google-auth-oauthlib is critical for the fix.
+google-auth>=2.28.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.1.1
+google-api-python-client>=2.120.0
+
+# JWT for decoding Google ID tokens
+PyJWT>=2.8.0
+
+# Selenium for web automation
+selenium>=4.18.0
+
+# Airtable and API dependencies
+requests>=2.31.0
+
+# Date/time handling
+python-dateutil>=2.8.2
+pytz>=2.3.0
+
+# Cryptography for secure credential storage
+cryptography>=42.0.0
+keyring>=24.3.0
+
+# TOTP (Two-Factor Authentication)
+pyotp>=2.9.0
+
+# Packaging version comparison
+packaging>=23.2
+
+# Development dependencies (optional)
+python-dotenv>=1.0.0

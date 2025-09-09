@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OAuth Setup Required - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.setup-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.warning-box {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    color: #856404;
+}
+
+.instruction-step {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 30px;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.step-number {
+    background: #6DC7D0;
+    color: white;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    margin-right: 15px;
+}
+
+.code-block {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+    font-family: monospace;
+    font-size: 14px;
+    margin: 10px 0;
+    overflow-x: auto;
+}
+
+.highlight {
+    background: #fff3cd;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="header">
+    <h4 class="logo">Google OAuth Setup - GN Ticket Automator</h4>
+  </header>
+
+  <div class="setup-container">
+    <div class="warning-box">
+      <h3>🔧 Setup Required</h3>
+      <p><strong>Google OAuth credentials are not configured.</strong> This is a one-time setup needed before users can log in with Google.</p>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">1</span>Create Google Cloud Project</h3>
+      <ol>
+        <li>Go to the <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a></li>
+        <li>Click "Create Project" or select an existing project</li>
+        <li>Name your project (e.g., "GN Ticket Automator")</li>
+        <li>Note your project ID for later</li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">2</span>Enable Google+ API</h3>
+      <ol>
+        <li>In your Google Cloud project, go to "APIs & Services" → "Library"</li>
+        <li>Search for "Google+ API"</li>
+        <li>Click on it and press "Enable"</li>
+        <li>Also enable "Google OAuth2 API" if available</li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">3</span>Create OAuth Credentials</h3>
+      <ol>
+        <li>Go to "APIs & Services" → "Credentials"</li>
+        <li>Click "Create Credentials" → "OAuth client ID"</li>
+        <li>Choose "Web application"</li>
+        <li>Name it "GN Ticket Automator"</li>
+        <li>Add authorized redirect URIs:
+          <div class="code-block">
+            http://localhost:5000/oauth/callback<br>
+            https://yourdomain.com/oauth/callback
+          </div>
+        </li>
+        <li>Click "Create"</li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">4</span>Configure Environment Variables</h3>
+      <p>After creating OAuth credentials, you'll get a <strong>Client ID</strong> and <strong>Client Secret</strong>. Set these as environment variables:</p>
+
+      <h4>On Mac/Linux:</h4>
+      <div class="code-block">
+export GOOGLE_CLIENT_ID="your_client_id_here"<br>
+export GOOGLE_CLIENT_SECRET="your_client_secret_here"<br>
+export SECRET_KEY="your_random_secret_key_here"
+      </div>
+
+      <h4>On Windows:</h4>
+      <div class="code-block">
+set GOOGLE_CLIENT_ID=your_client_id_here<br>
+set GOOGLE_CLIENT_SECRET=your_client_secret_here<br>
+set SECRET_KEY=your_random_secret_key_here
+      </div>
+
+      <h4>For Production (.env file):</h4>
+      <div class="code-block">
+GOOGLE_CLIENT_ID=your_client_id_here<br>
+GOOGLE_CLIENT_SECRET=your_client_secret_here<br>
+SECRET_KEY=your_random_secret_key_here
+      </div>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">5</span>Configure OAuth Consent Screen</h3>
+      <ol>
+        <li>Go to "APIs & Services" → "OAuth consent screen"</li>
+        <li>Choose "Internal" if for your organization only, or "External" for public use</li>
+        <li>Fill in the required information:
+          <ul>
+            <li><strong>App name:</strong> GN Ticket Automator</li>
+            <li><strong>User support email:</strong> Your email</li>
+            <li><strong>Developer contact:</strong> Your email</li>
+          </ul>
+        </li>
+        <li>Add scopes: email, profile, openid</li>
+        <li>Add test users (the emails of people who will use this app)</li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">6</span>Restart the Application</h3>
+      <p>After setting the environment variables:</p>
+      <ol>
+        <li>Stop the current application (Ctrl+C)</li>
+        <li>Restart it with: <code class="highlight">python main.py</code></li>
+        <li>The login page should now work properly</li>
+      </ol>
+    </div>
+  </div>
+</div>
+</body>
+</html>

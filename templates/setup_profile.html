@@ -1,0 +1,637 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup Your Profile - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.setup-container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.wizard-step {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 30px;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    display: none;
+}
+
+.wizard-step.active {
+    display: block;
+}
+
+.wizard-step.completed {
+    background: #f8f9fa;
+    border-color: #28a745;
+}
+
+.step-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #6DC7D0;
+}
+
+.step-number {
+    background: #6DC7D0;
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 18px;
+    margin-right: 15px;
+}
+
+.step-number.completed {
+    background: #28a745;
+}
+
+.step-title {
+    flex: 1;
+}
+
+.step-content {
+    display: flex;
+    gap: 30px;
+    align-items: flex-start;
+}
+
+.instructions {
+    flex: 1;
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+}
+
+.input-section {
+    flex: 1;
+    background: white;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+
+.open-site-btn {
+    background: linear-gradient(45deg, #6DC7D0, #52BAD5);
+    color: white;
+    border: none;
+    padding: 15px 25px;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    margin: 10px 5px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.open-site-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 8px rgba(0,0,0,0.15);
+    color: white;
+    text-decoration: none;
+}
+
+.form-group {
+    margin: 20px 0;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #5D5E5D;
+}
+
+.form-group input[type="text"], 
+.form-group input[type="password"], 
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 16px;
+    box-sizing: border-box;
+    font-family: monospace;
+}
+
+.form-group input.valid {
+    border-color: #28a745;
+    background-color: #f8fff8;
+}
+
+.form-group textarea {
+    height: 100px;
+    resize: vertical;
+}
+
+.validation-message {
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.validation-message.success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.validation-message.error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.step-controls {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #ddd;
+}
+
+.btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.btn-primary {
+    background: #6DC7D0;
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #52BAD5;
+}
+
+.btn-primary:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: #545b62;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #e9ecef;
+    border-radius: 4px;
+    margin: 20px 0;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6DC7D0, #52BAD5);
+    transition: width 0.3s ease;
+}
+
+.user-info {
+    background: #e8f4f8;
+    border: 1px solid #6DC7D0;
+    border-radius: 4px;
+    padding: 15px;
+    margin: 20px 0;
+    text-align: center;
+}
+
+.screenshot {
+    max-width: 100%;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    margin: 15px 0;
+}
+
+.checklist {
+    list-style: none;
+    padding: 0;
+}
+
+.checklist li {
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.checklist li:before {
+    content: "☐ ";
+    color: #6DC7D0;
+    font-weight: bold;
+    margin-right: 8px;
+}
+
+.checklist li.completed:before {
+    content: "☑ ";
+    color: #28a745;
+}
+
+.example-key {
+    background: #f1f3f4;
+    padding: 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    border: 1px solid #dadce0;
+    word-break: break-all;
+    margin: 10px 0;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="header">
+    <h4 class="logo">Profile Setup - GN Ticket Automator</h4>
+  </header>
+  
+  <div class="setup-container">
+    <!-- User Info -->
+    <div class="user-info">
+      <h3>Welcome, {{ user.name }}!</h3>
+      <p><strong>Email:</strong> {{ user.email }}</p>
+      <p>Let's set up your automation credentials step by step.</p>
+    </div>
+    
+    <!-- Progress Bar -->
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width: 33%"></div>
+    </div>
+    <p style="text-align: center; color: #666;">Step <span id="currentStep">1</span> of 3</p>
+    
+    {% if error %}
+    <div class="validation-message error">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form id="setupForm" method="POST" action="/setup">
+      
+      <!-- Step 1: Airtable API Key -->
+      <div class="wizard-step active" id="step1">
+        <div class="step-header">
+          <div class="step-number" id="stepNum1">1</div>
+          <div class="step-title">
+            <h3>Get Your Airtable API Key</h3>
+            <p>This allows the app to read your session data from Airtable</p>
+          </div>
+        </div>
+        
+        <div class="step-content">
+          <div class="instructions">
+            <h4>Follow these steps:</h4>
+            <ul class="checklist" id="airtableChecklist">
+              <li>Click "Open Airtable" to visit the API tokens page</li>
+              <li>Sign in with your Airtable account</li>
+              <li>Click "Create new token"</li>
+              <li>Name it "GN Ticket Automator"</li>
+              <li>Select your workspace and Sessions base</li>
+              <li>Grant "Read" and "Write" permissions</li>
+              <li>Copy the generated token (starts with "pat...")</li>
+              <li>Paste it in the field on the right</li>
+            </ul>
+            
+            <div style="margin: 20px 0;">
+              <a href="https://airtable.com/create/tokens" target="_blank" class="open-site-btn">
+                🔗 Open Airtable API Tokens
+              </a>
+              <button type="button" class="open-site-btn" onclick="showExample('airtable')">
+                👁️ Show Example
+              </button>
+            </div>
+            
+            <div id="airtableExample" style="display: none;">
+              <h5>Example API Key:</h5>
+              <div class="example-key">pat1234567890abcdef.a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0</div>
+              <p><small>Your actual key will be different and much longer.</small></p>
+            </div>
+          </div>
+          
+          <div class="input-section">
+            <div class="form-group">
+              <label for="airtable_api_key">Paste Your Airtable API Key:</label>
+              <input type="password" 
+                     id="airtable_api_key" 
+                     name="airtable_api_key" 
+                     value="{{ profile.airtable_api_key or '' }}"
+                     placeholder="pat..."
+                     oninput="validateAirtableKey()">
+              <div id="airtableValidation" class="validation-message" style="display: none;"></div>
+            </div>
+            
+            <div style="margin-top: 20px;">
+              <h5>🔒 Security Note:</h5>
+              <p style="font-size: 14px; color: #666;">
+                Your API key is encrypted and stored securely on your computer. 
+                It's never shared or transmitted except to connect to your Airtable.
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="step-controls">
+          <div></div>
+          <button type="button" class="btn btn-primary" id="nextStep1" onclick="nextStep()" disabled>
+            Next: ServiceNow Setup →
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: ServiceNow Credentials -->
+      <div class="wizard-step" id="step2">
+        <div class="step-header">
+          <div class="step-number" id="stepNum2">2</div>
+          <div class="step-title">
+            <h3>ServiceNow Password</h3>
+            <p>Your regular ServiceNow login password</p>
+          </div>
+        </div>
+        
+        <div class="step-content">
+          <div class="instructions">
+            <h4>Simple step:</h4>
+            <ul class="checklist">
+              <li>Enter the same password you use to log into ServiceNow manually</li>
+              <li>Your username is automatically set to: <strong>{{ user.email }}</strong></li>
+            </ul>
+            
+            <div style="margin: 20px 0;">
+              <a href="https://nunavutprod.service-now.com/login.do" target="_blank" class="open-site-btn">
+                🔗 Test ServiceNow Login
+              </a>
+            </div>
+            
+            <div style="background: #fff3cd; padding: 15px; border-radius: 4px; margin: 15px 0;">
+              <h5>💡 Tip:</h5>
+              <p>If you're not sure about your password, try logging into ServiceNow manually first 
+              using the link above with your email and password.</p>
+            </div>
+          </div>
+          
+          <div class="input-section">
+            <div class="form-group">
+              <label>ServiceNow Username (read-only):</label>
+              <input type="text" value="{{ user.email }}" disabled>
+            </div>
+            
+            <div class="form-group">
+              <label for="servicenow_password">ServiceNow Password:</label>
+              <input type="password" 
+                     id="servicenow_password" 
+                     name="servicenow_password" 
+                     value="{{ profile.servicenow_password or '' }}"
+                     placeholder="Your ServiceNow password"
+                     oninput="validateServiceNowPassword()">
+              <div id="servicenowValidation" class="validation-message" style="display: none;"></div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="step-controls">
+          <button type="button" class="btn btn-secondary" onclick="previousStep()">
+            ← Back
+          </button>
+          <button type="button" class="btn btn-primary" id="nextStep2" onclick="nextStep()" disabled>
+            Next: 2FA Setup →
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 3: 2FA Secret -->
+      <div class="wizard-step" id="step3">
+        <div class="step-header">
+          <div class="step-number" id="stepNum3">3</div>
+          <div class="step-title">
+            <h3>Two-Factor Authentication Secret</h3>
+            <p>This allows automatic 2FA token generation</p>
+          </div>
+        </div>
+        
+        <div class="step-content">
+          <div class="instructions">
+            <h4>Get your 2FA secret:</h4>
+            <ul class="checklist" id="tofaChecklist">
+              <li>Click "Open ServiceNow" and log in</li>
+              <li>Go to your profile settings</li>
+              <li>Find "Two-Factor Authentication" section</li>
+              <li>Click "Set up new device" or "Add authenticator"</li>
+              <li>Choose "Authenticator app" option</li>
+              <li>Click "Enter setup key manually" (don't scan QR code)</li>
+              <li>Copy the long text secret key</li>
+              <li>Paste it in the field on the right</li>
+            </ul>
+            
+            <div style="margin: 20px 0;">
+              <a href="https://nunavutprod.service-now.com/login.do" target="_blank" class="open-site-btn">
+                🔗 Open ServiceNow
+              </a>
+              <button type="button" class="open-site-btn" onclick="showExample('tofa')">
+                👁️ Show Example
+              </button>
+            </div>
+            
+            <div id="tofaExample" style="display: none;">
+              <h5>Example Secret Key:</h5>
+              <div class="example-key">JBSWY3DPEHPK3PXP</div>
+              <p><small>Your actual secret will be longer and contain letters and numbers.</small></p>
+            </div>
+          </div>
+          
+          <div class="input-section">
+            <div class="form-group">
+              <label for="totp_secret">2FA Secret Key:</label>
+              <textarea id="totp_secret" 
+                        name="totp_secret" 
+                        placeholder="Paste your TOTP secret key here..."
+                        oninput="validateTotpSecret()">{{ profile.totp_secret or '' }}</textarea>
+              <div id="totpValidation" class="validation-message" style="display: none;"></div>
+            </div>
+            
+            <div style="background: #d4edda; padding: 15px; border-radius: 4px; margin: 15px 0;">
+              <h5>✅ Backup Recommendation:</h5>
+              <p>After getting the secret key, you can also add it to Google Authenticator 
+              or another authenticator app as a backup for manual logins.</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="step-controls">
+          <button type="button" class="btn btn-secondary" onclick="previousStep()">
+            ← Back
+          </button>
+          <button type="submit" class="btn btn-primary" id="finishSetup" disabled>
+            🚀 Complete Setup
+          </button>
+        </div>
+      </div>
+      
+    </form>
+  </div>
+</div>
+
+<script>
+let currentStepNumber = 1;
+
+function validateAirtableKey() {
+    const input = document.getElementById('airtable_api_key');
+    const validation = document.getElementById('airtableValidation');
+    const value = input.value.trim();
+    
+    if (value.length === 0) {
+        validation.style.display = 'none';
+        input.classList.remove('valid');
+        document.getElementById('nextStep1').disabled = true;
+        return;
+    }
+    
+    if (value.startsWith('pat') && value.length > 20) {
+        validation.textContent = '✓ Valid Airtable API key format';
+        validation.className = 'validation-message success';
+        validation.style.display = 'block';
+        input.classList.add('valid');
+        document.getElementById('nextStep1').disabled = false;
+        updateChecklist('airtableChecklist', 7);
+    } else {
+        validation.textContent = '⚠ API key should start with "pat" and be much longer';
+        validation.className = 'validation-message error';
+        validation.style.display = 'block';
+        input.classList.remove('valid');
+        document.getElementById('nextStep1').disabled = true;
+    }
+}
+
+function validateServiceNowPassword() {
+    const input = document.getElementById('servicenow_password');
+    const validation = document.getElementById('servicenowValidation');
+    const value = input.value.trim();
+    
+    if (value.length === 0) {
+        validation.style.display = 'none';
+        input.classList.remove('valid');
+        document.getElementById('nextStep2').disabled = true;
+        return;
+    }
+    
+    if (value.length >= 6) {
+        validation.textContent = '✓ Password entered';
+        validation.className = 'validation-message success';
+        validation.style.display = 'block';
+        input.classList.add('valid');
+        document.getElementById('nextStep2').disabled = false;
+    } else {
+        validation.textContent = '⚠ Password seems too short';
+        validation.className = 'validation-message error';
+        validation.style.display = 'block';
+        input.classList.remove('valid');
+        document.getElementById('nextStep2').disabled = true;
+    }
+}
+
+function validateTotpSecret() {
+    const input = document.getElementById('totp_secret');
+    const validation = document.getElementById('totpValidation');
+    const value = input.value.trim().replace(/\s/g, '');
+    
+    if (value.length === 0) {
+        validation.style.display = 'none';
+        input.classList.remove('valid');
+        document.getElementById('finishSetup').disabled = true;
+        return;
+    }
+    
+    if (value.length >= 16 && /^[A-Z2-7]+$/.test(value)) {
+        validation.textContent = '✓ Valid TOTP secret format';
+        validation.className = 'validation-message success';
+        validation.style.display = 'block';
+        input.classList.add('valid');
+        document.getElementById('finishSetup').disabled = false;
+        updateChecklist('tofaChecklist', 7);
+    } else {
+        validation.textContent = '⚠ Secret should be letters/numbers only, usually 16+ characters';
+        validation.className = 'validation-message error';
+        validation.style.display = 'block';
+        input.classList.remove('valid');
+        document.getElementById('finishSetup').disabled = true;
+    }
+}
+
+function nextStep() {
+    // Hide current step
+    document.getElementById(`step${currentStepNumber}`).classList.remove('active');
+    document.getElementById(`stepNum${currentStepNumber}`).classList.add('completed');
+    
+    // Show next step
+    currentStepNumber++;
+    document.getElementById(`step${currentStepNumber}`).classList.add('active');
+    document.getElementById('currentStep').textContent = currentStepNumber;
+    
+    // Update progress bar
+    const progress = (currentStepNumber / 3) * 100;
+    document.getElementById('progressFill').style.width = progress + '%';
+}
+
+function previousStep() {
+    // Hide current step
+    document.getElementById(`step${currentStepNumber}`).classList.remove('active');
+    
+    // Show previous step
+    currentStepNumber--;
+    document.getElementById(`step${currentStepNumber}`).classList.add('active');
+    document.getElementById(`stepNum${currentStepNumber}`).classList.remove('completed');
+    document.getElementById('currentStep').textContent = currentStepNumber;
+    
+    // Update progress bar
+    const progress = (currentStepNumber / 3) * 100;
+    document.getElementById('progressFill').style.width = progress + '%';
+}
+
+function showExample(type) {
+    const element = document.getElementById(type + 'Example');
+    if (element.style.display === 'none') {
+        element.style.display = 'block';
+    } else {
+        element.style.display = 'none';
+    }
+}
+
+function updateChecklist(checklistId, stepIndex) {
+    const checklist = document.getElementById(checklistId);
+    const items = checklist.getElementsByTagName('li');
+    if (items[stepIndex]) {
+        items[stepIndex].classList.add('completed');
+    }
+}
+
+// Initialize validations on page load
+document.addEventListener('DOMContentLoaded', function() {
+    validateAirtableKey();
+    validateServiceNowPassword();
+    validateTotpSecret();
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Update Check Error - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style>
+.error-container {
+    max-width: 600px;
+    margin: 50px auto;
+    padding: 30px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    text-align: center;
+}
+.error-icon {
+    font-size: 48px;
+    color: #dc3545;
+    margin-bottom: 20px;
+}
+.error-message {
+    color: #666;
+    margin: 20px 0;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 14px;
+    text-align: left;
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <header class="header">
+        <h4 class="logo">GN Ticket Automator - Update Check</h4>
+    </header>
+    
+    <div class="error-container">
+        <div class="error-icon">⚠️</div>
+        <h2>Update Check Failed</h2>
+        <p>Current version: {{ current_version }}</p>
+        
+        <div class="error-message">{{ error }}</div>
+        
+        <p>This might be due to:</p>
+        <ul style="text-align: left;">
+            <li>No internet connection</li>
+            <li>GitHub API rate limiting</li>
+            <li>No releases published on GitHub yet</li>
+        </ul>

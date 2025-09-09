@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Profile Error - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.error-container {
+    max-width: 700px;
+    margin: 50px auto;
+    padding: 20px;
+}
+
+.error-box {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+    padding: 30px;
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.error-icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.error-details {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+    font-family: monospace;
+    font-size: 14px;
+    margin: 15px 0;
+    word-break: break-all;
+}
+
+.action-button {
+    background: #6DC7D0;
+    color: white;
+    padding: 12px 24px;
+    text-decoration: none;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 10px 5px;
+    transition: background 0.3s ease;
+}
+
+.action-button:hover {
+    background: #52BAD5;
+    color: white;
+    text-decoration: none;
+}
+
+.action-button.secondary {
+    background: #6c757d;
+}
+
+.action-button.secondary:hover {
+    background: #545b62;
+}
+
+.user-info {
+    background: #e8f4f8;
+    border: 1px solid #6DC7D0;
+    border-radius: 4px;
+    padding: 15px;
+    margin: 20px 0;
+    text-align: center;
+}
+
+.troubleshooting {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 4px;
+    padding: 20px;
+    margin: 20px 0;
+    color: #856404;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="header">
+    <h4 class="logo">GN Ticket Automator</h4>
+    <div style="text-align: center; padding: 10px;">
+      <span style="color: white;">{{ user.name }}</span>
+      <a href="/logout" style="color: white; margin-left: 20px;">Logout</a>
+    </div>
+  </header>
+  
+  <div class="error-container">
+    <div class="user-info">
+      <h3>Profile Configuration Error</h3>
+      <p><strong>User:</strong> {{ user.name }} ({{ user.email }})</p>
+    </div>
+    
+    <div class="error-box">
+      <div class="error-icon">⚠️</div>
+      <h2>Unable to Load Sessions</h2>
+      <p>There was an error connecting to your Airtable data. This usually means there's an issue with your API key or permissions.</p>
+      
+      <h4>Error Details:</h4>
+      <div class="error-details">{{ error }}</div>
+    </div>
+    
+    <div class="troubleshooting">
+      <h4>🔧 Troubleshooting Steps:</h4>
+      <ol style="text-align: left;">
+        <li><strong>Check your Airtable API key:</strong>
+          <ul>
+            <li>Make sure it starts with "pat" and is the full key</li>
+            <li>Verify it has read/write permissions to your Sessions table</li>
+            <li>Try creating a new API key if the current one is old</li>
+          </ul>
+        </li>
+        <li><strong>Verify Airtable access:</strong>
+          <ul>
+            <li>Log into Airtable manually and check you can see the Sessions table</li>
+            <li>Make sure the table is in the correct workspace</li>
+            <li>Check that the table name is exactly "Sessions"</li>
+          </ul>
+        </li>
+        <li><strong>Check internet connection:</strong>
+          <ul>
+            <li>Ensure you can access airtable.com in your browser</li>
+            <li>Try refreshing this page after a moment</li>
+          </ul>
+        </li>
+      </ol>
+    </div>
+    
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="/setup" class="action-button">
+        🔧 Fix Profile Settings
+      </a>
+      <a href="/gn_ticket" class="action-button secondary">
+        🔄 Try Again
+      </a>
+      <a href="/" class="action-button secondary">
+        🏠 Go Home
+      </a>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 30px 0;">
+      <h4>📋 Common Error Solutions:</h4>
+      <ul style="text-align: left; font-size: 14px;">
+        <li><strong>"Invalid API key":</strong> Your Airtable API key is incorrect or expired</li>
+        <li><strong>"Base not found":</strong> The API key doesn't have access to the Sessions base</li>
+        <li><strong>"Table not found":</strong> The Sessions table doesn't exist or is named differently</li>
+        <li><strong>"Permission denied":</strong> Your API key needs read/write permissions</li>
+        <li><strong>"Connection error":</strong> Network issue - try again in a moment</li>
+      </ul>
+    </div>
+  </div>
+</div>
+</body>
+</html>

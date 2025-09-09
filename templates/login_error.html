@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login Error - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.error-container {
+    max-width: 600px;
+    margin: 50px auto;
+    padding: 20px;
+    text-align: center;
+}
+
+.error-box {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+    padding: 30px;
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.error-icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+}
+
+.retry-button {
+    background: #6DC7D0;
+    color: white;
+    padding: 12px 24px;
+    text-decoration: none;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 20px 10px;
+    transition: background 0.3s ease;
+}
+
+.retry-button:hover {
+    background: #52BAD5;
+    color: white;
+    text-decoration: none;
+}
+
+.home-button {
+    background: #5D5E5D;
+    color: white;
+    padding: 12px 24px;
+    text-decoration: none;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 20px 10px;
+    transition: background 0.3s ease;
+}
+
+.home-button:hover {
+    background: #404041;
+    color: white;
+    text-decoration: none;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="header">
+    <h4 class="logo">GN Ticket Automator</h4>
+  </header>
+  
+  <div class="error-container">
+    <div class="error-box">
+      <div class="error-icon">⚠️</div>
+      <h2>Login Failed</h2>
+      <p>We encountered an error while trying to log you in with Google.</p>
+      
+      <h4>Common Issues:</h4>
+      <ul style="text-align: left; margin: 20px auto; max-width: 400px;">
+        <li>You may have cancelled the login process</li>
+        <li>Your account might not be authorized for this application</li>
+        <li>There could be a temporary issue with Google's authentication service</li>
+        <li>The application may not be properly configured</li>
+      </ul>
+      
+      <h4>What to try:</h4>
+      <ul style="text-align: left; margin: 20px auto; max-width: 400px;">
+        <li>Try logging in again</li>
+        <li>Make sure you're using a TakingITGlobal email address</li>
+        <li>Clear your browser cache and cookies</li>
+        <li>Contact your administrator if the problem persists</li>
+      </ul>
+    </div>
+    
+    <div>
+      <a href="/login" class="retry-button">Try Again</a>
+      <a href="/" class="home-button">Go Home</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

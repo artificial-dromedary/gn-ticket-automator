@@ -1,0 +1,360 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GN Ticket Progress</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.progress-container {
+    width: 90%;
+    margin: 20px auto;
+    padding: 20px;
+    background: #f9f9f9;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.progress-bar {
+    width: 100%;
+    height: 30px;
+    background-color: #e0e0e0;
+    border-radius: 15px;
+    overflow: hidden;
+    margin: 20px 0;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6DC7D0, #52BAD5);
+    width: 0%;
+    transition: width 0.5s ease;
+    border-radius: 15px;
+}
+
+.progress-text {
+    text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #5D5E5D;
+}
+
+.log-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 15px;
+    background: white;
+    font-family: monospace;
+    font-size: 14px;
+    display: flex;
+    /* --- FIX: STACK LOGS VERTICALLY, NEWEST ON TOP --- */
+    flex-direction: column-reverse;
+}
+
+.log-entry {
+    margin: 5px 0;
+    padding: 8px;
+    border-radius: 3px;
+    border-left: 4px solid #6DC7D0;
+    background: #f8f9fa;
+    animation: slideDown 0.3s ease-in;
+    transition: background-color 0.5s ease;
+}
+
+/* --- NEW: Style for the currently active task --- */
+.log-entry.active {
+    border-left-color: #52BAD5;
+    animation: slideDown 0.3s ease-in, pulse 2s infinite;
+}
+
+/* --- NEW: Pulsing animation to show the active task --- */
+@keyframes pulse {
+    0% {
+        background-color: #f0f7f8;
+    }
+    50% {
+        background-color: #e3f2f4;
+    }
+    100% {
+        background-color: #f0f7f8;
+    }
+}
+
+
+/* Animate new entries sliding in from top */
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.log-entry.error {
+    border-left-color: #dc3545;
+    background: #f8d7da;
+    color: #721c24;
+    animation: slideDown 0.3s ease-in; /* Override pulse on error */
+}
+
+.log-entry.completed {
+    border-left-color: #28a745;
+    background: #d4edda;
+    color: #155724;
+    animation: slideDown 0.3s ease-in; /* Override pulse on complete */
+}
+
+.timestamp {
+    color: #666;
+    font-size: 12px;
+    margin-right: 10px;
+}
+
+.spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #6DC7D0;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 2s linear infinite;
+    margin: 20px auto;
+    display: block;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.status-complete {
+    color: #28a745;
+    font-size: 18px;
+    font-weight: bold;
+    text-align: center;
+    margin: 20px 0;
+}
+
+.status-error {
+    color: #dc3545;
+    font-size: 18px;
+    font-weight: bold;
+    text-align: center;
+    margin: 20px 0;
+}
+
+.back-button {
+    background: #6DC7D0;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    margin: 20px 10px;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.back-button:hover {
+    background: #52BAD5;
+}
+</style>
+</head>
+<body>
+<!-- Main Container -->
+<div class="container"> 
+  <!-- Header -->
+  <header class="header">
+    <h4 class="logo">GN Ticket Booking Progress</h4>
+  </header>
+  
+  <div class="progress-container">
+    <h2>Processing {{ session_count }} session(s)...</h2>
+    
+    <!-- Progress Bar -->
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-text" id="progressText">Initializing...</div>
+    
+    <!-- Spinner (hidden when complete) -->
+    <div class="spinner" id="spinner"></div>
+    
+    <!-- Status Messages -->
+    <div id="statusMessage"></div>
+    
+    <!-- Progress Log -->
+    <h3>Progress Log:</h3>
+    <div class="log-container" id="logContainer">
+      <!-- Initial entry will be at bottom (oldest) due to flex-direction: column-reverse -->
+      <div class="log-entry" id="initialEntry">
+        <span class="timestamp">--:--:--</span>
+        Initializing booking process...
+      </div>
+    </div>
+    
+    <!-- Navigation Buttons -->
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="/gn_ticket" class="back-button">← Back to Sessions</a>
+      <button class="back-button" onclick="refreshProgress()" id="refreshBtn">Refresh Status</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const progressSessionId = "{{ progress_session_id }}";
+let eventSource = null;
+let isComplete = false;
+
+function startProgressStream() {
+    if (eventSource) {
+        eventSource.close();
+    }
+    
+    eventSource = new EventSource(`/progress/${progressSessionId}`);
+    
+    eventSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            // This is the live-update function for individual messages
+            updateWithNewEntry(data);
+        } catch (e) {
+            console.error('Error parsing progress data:', e);
+        }
+    };
+
+    eventSource.onerror = function(event) {
+        console.error('EventSource failed:', event);
+        if (!isComplete) {
+            // Try to reconnect after 2 seconds
+            setTimeout(startProgressStream, 2000);
+        }
+    };
+}
+
+function updateWithNewEntry(entry) {
+    const logContainer = document.getElementById('logContainer');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    const spinner = document.getElementById('spinner');
+    const statusMessage = document.getElementById('statusMessage');
+
+    // 1. Find the previously active log entry and deactivate it
+    const previousActive = logContainer.querySelector('.log-entry.active');
+    if (previousActive) {
+        previousActive.classList.remove('active');
+    }
+
+    // 2. Add new log entry
+    const logEntry = document.createElement('div');
+    logEntry.className = `log-entry ${entry.status}`;
+    logEntry.innerHTML = `
+        <span class="timestamp">${entry.timestamp}</span>
+        ${entry.message}
+    `;
+
+    // 3. Make the new entry the active one
+    logEntry.classList.add('active');
+
+    // Append the new entry. Because of column-reverse, it appears at the top.
+    logContainer.appendChild(logEntry);
+
+    // *** THE CRITICAL FIX IS HERE ***
+    // We must scroll to the BOTTOM of the container's content (scrollHeight)
+    // to make the newest item (which is visually at the top) visible.
+    logContainer.scrollTop = logContainer.scrollHeight;
+
+    // Remove the initial placeholder entry
+    const initialEntry = document.getElementById('initialEntry');
+    if (initialEntry) {
+        initialEntry.remove();
+    }
+
+    // Update the top progress text and bar
+    if (entry.step && entry.total_steps) {
+        const percentage = (entry.step / entry.total_steps) * 100;
+        progressFill.style.width = percentage + '%';
+        progressText.textContent = `Step ${entry.step} of ${entry.total_steps}`;
+    } else {
+        // This is the line that was updating the top text correctly
+        progressText.textContent = entry.message;
+    }
+
+    // Handle completion or error state
+    if (entry.status === 'completed' || entry.status === 'error') {
+        isComplete = true;
+        progressFill.style.width = '100%';
+        spinner.style.display = 'none';
+
+        logEntry.classList.remove('active'); // Stop pulsing on the final item
+
+        if (entry.status === 'completed') {
+            statusMessage.innerHTML = '<div class="status-complete">✓ Booking process completed successfully!</div>';
+        } else {
+            statusMessage.innerHTML = '<div class="status-error">✗ An error occurred during the booking process.</div>';
+        }
+
+        eventSource.close();
+    }
+}
+
+// --- IMPROVED AND MORE EFFICIENT REFRESH FUNCTION ---
+function refreshProgress() {
+    fetch(`/progress-status/${progressSessionId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data || data.length === 0) return;
+
+            const logContainer = document.getElementById('logContainer');
+            logContainer.innerHTML = ''; // Clear the entire log
+
+            // Rebuild the log from the full history
+            data.forEach(entry => {
+                const logEntry = document.createElement('div');
+                logEntry.className = `log-entry ${entry.status}`;
+                logEntry.innerHTML = `<span class="timestamp">${entry.timestamp}</span> ${entry.message}`;
+                logContainer.appendChild(logEntry);
+            });
+
+            // Mark the last entry as active if the process is not complete
+            const lastEntryData = data[data.length - 1];
+            if (lastEntryData.status !== 'completed' && lastEntryData.status !== 'error') {
+                logContainer.lastChild.classList.add('active');
+            }
+
+            // Also update the top text with the latest message
+            updateWithNewEntry(lastEntryData);
+        })
+        .catch(error => {
+            console.error('Error fetching progress:', error);
+        });
+}
+
+// Start the progress stream when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    startProgressStream();
+
+    // Auto-refresh every 30 seconds as a fallback
+    setInterval(function() {
+        if (!isComplete) {
+            refreshProgress();
+        }
+    }, 30000);
+});
+
+// Clean up when page is unloaded
+window.addEventListener('beforeunload', function() {
+    if (eventSource) {
+        eventSource.close();
+    }
+});
+</script>
+
+</body>
+</html>

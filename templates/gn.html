@@ -1,0 +1,215 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make My GN Tickets</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+/* General body style for full-width layout */
+body {
+  margin: 0;
+  font-family: sans-serif;
+}
+
+/* Wrapper to provide padding for full-width sections */
+.content-wrapper {
+  width: 100%;
+  padding: 15px 20px;
+  box-sizing: border-box; /* Ensures padding is included in the width calculation */
+}
+
+.session {
+  border: 1px solid #ddd;
+  margin: 10px 0; /* Adjusted margin for full-width layout */
+  padding: 15px;
+  border-radius: 5px;
+  background: #f9f9f9;
+}
+.session h4 {
+  color: #333;
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+.session .tag {
+  color: #666;
+  font-size: 14px;
+}
+.session .details {
+  margin-top: 10px;
+}
+.session .detail-item {
+  margin: 5px 0;
+  padding: 8px;
+  background: #fff;
+  border-radius: 3px;
+}
+.status-good {
+  color: green;
+  font-weight: bold;
+}
+.status-bad {
+  color: red;
+  font-weight: bold;
+}
+.alert {
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+}
+.alert-info {
+    color: #31708f;
+    background-color: #d9edf7;
+    border-color: #bce8f1;
+}
+</style>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script>
+$(document).ready(function(){
+  // This function is no longer strictly necessary if all sessions are shown by default
+  // but is kept in case you add filtering functionality later.
+  $("#show_all").click(function(){
+    $(".session").show();
+  });
+});
+
+// Function to remove a session from processing
+function removeSession(button) {
+  var sessionDiv = $(button).closest('.session');
+
+  // Set the hidden input to 'n' to exclude from processing
+  sessionDiv.find('input[name="book_me"]').val('n');
+
+  // Hide the session with a fade effect
+  sessionDiv.fadeOut(300);
+}
+</script>
+</head>
+<body>
+
+<!-- Update notification injected via include will appear at the top -->
+{% include 'update_notification.html' %}
+
+<!-- Header -->
+<header class="header content-wrapper">
+  <h4 class="logo">Make my Zoom &amp; GN tickets</h4>
+</header>
+
+<!-- Update available banner -->
+{% if update_available and not session.get('update_dismissed') %}
+<div class="content-wrapper">
+    <div class="alert alert-info">
+        📦 <strong>Update Available:</strong> Version {{ update_info.version }} is ready to install.
+        <a href="/update/check" class="btn btn-sm">View Details</a>
+    </div>
+</div>
+{% endif %}
+
+<!-- User Info Section -->
+<section class="intro content-wrapper">
+  <h3>{{ user.name if user else 'User' }}</h3>
+</section>
+
+<!-- Main Form and Session Content -->
+<div class="content-wrapper">
+  <form id="booker" name="booker" action="/gn_ticket/book_sessions" method="post">
+    <p>Sessions show here when their status is set to "Booked" and assigned to <strong>{{ user.name if user else 'you' }}</strong> in Nunavut, scheduled for today or later, and haven't had GN tickets requested yet. Check that these are ready, then click the button.</p>
+
+    <div style="margin: 15px 0; padding: 10px; background: #f0f8ff; border-radius: 5px;">
+      <label>
+        <input type="checkbox" name="watch_browser" id="watch_browser" value="yes" style="margin-right: 8px;">
+        <strong>Watch it work</strong> - Show browser window while processing (slower but you can see what's happening)
+      </label>
+    </div>
+
+    <p>
+      <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
+    </p>
+
+    <!-- Session Gallery Section -->
+    <div class="gallery">
+      {% if all_sessions %}
+        {% for session in all_sessions %}
+        <div class="session">
+          <!-- Remove button with hidden form fields -->
+          <div style="text-align: left; margin-bottom: 10px;">
+            <button type="button" onclick="removeSession(this)" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
+              🗑️ Remove from processing
+            </button>
+            <input name="book_me" type="hidden" id="{{session.s_id}}" value="y">
+            <input name="airtable_id" type="hidden" id="{{session.s_id}}_airtable" value="{{session.s_id}}">
+          </div>
+
+          <!-- Session Title -->
+          <h4>{{ session.title }}</h4>
+
+          <!-- Basic Info -->
+          <p class="tag">
+            <strong>School:</strong> {{ session.school }}<br>
+            <strong>Teacher:</strong> {{ session.teacher }}<br>
+            <strong>Date/Time:</strong> {{ session.start_time.strftime('%Y-%m-%d %I:%M %p %Z') if session.start_time else 'Not set' }}
+          </p>
+
+          <!-- Details Section -->
+          <div class="details">
+            <!-- Grades -->
+            <div class="detail-item">
+              <strong>Grades:</strong>
+              {% if session.grades and session.grades != "Unknown" and session.grades != "" %}
+                <span class="status-good">{{ session.grades }} ✅</span>
+              {% else %}
+                <span class="status-bad">Not specified ❌</span>
+              {% endif %}
+            </div>
+
+            <!-- Number of Students -->
+            <div class="detail-item">
+              <strong>Students:</strong>
+              {% if session.num_students and session.num_students > 1 %}
+                <span class="status-good">{{ session.num_students }} students ✅</span>
+              {% else %}
+                <span class="status-bad">Number not specified ❌</span>
+              {% endif %}
+            </div>
+
+            <!-- Community -->
+            <div class="detail-item">
+              <strong>Community:</strong> {{ session.community if session.community else 'Not specified' }}
+            </div>
+
+            <!-- Session Length -->
+            <div class="detail-item">
+              <strong>Duration:</strong> {{ session.length }} minutes
+            </div>
+
+            <!-- Zoom Link Status -->
+            <div class="detail-item">
+              <strong>Zoom Link:</strong>
+              {% if session.zoom_link and session.zoom_link.strip() %}
+                <span class="status-good">Available ✅</span>
+              {% else %}
+                <span class="status-bad">Missing ❌</span>
+              {% endif %}
+            </div>
+
+            <!-- Status -->
+            <div class="detail-item">
+              <strong>Status:</strong> {{ session.status }}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="session">
+          <h4>No sessions found</h4>
+          <p>No sessions with "Booked" status were found. Check your Airtable configuration and make sure sessions have the correct status.</p>
+        </div>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+</body>
+</html>

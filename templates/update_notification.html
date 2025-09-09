@@ -1,0 +1,201 @@
+<!-- templates/update_notification.html -->
+<!-- This gets included in your main gn.html template -->
+{% if update_available and not session.get('update_dismissed') %}
+<div id="updateNotification" class="update-notification">
+    <div class="update-card">
+        <div class="update-header">
+            <h3>🎉 Update Available!</h3>
+            <button onclick="dismissUpdate()" class="dismiss-btn" title="Dismiss">×</button>
+        </div>
+        <div class="update-content">
+            <p><strong>Version {{ update_info.version }}</strong> is now available.</p>
+            <p>You're currently running version {{ current_version or 'Unknown' }}.</p>
+            
+            {% if update_info.release_notes %}
+            <details class="release-notes">
+                <summary>What's New</summary>
+                <div class="notes-content">{{ update_info.release_notes | safe }}</div>
+            </details>
+            {% endif %}
+            
+            <div class="update-actions">
+                <button onclick="startUpdate()" class="btn-update">
+                    📥 Install Update
+                </button>
+                <button onclick="dismissUpdate()" class="btn-later">
+                    Later
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.update-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    max-width: 400px;
+    animation: slideInRight 0.3s ease-out;
+}
+
+.update-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    overflow: hidden;
+}
+
+.update-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+
+.update-header h3 {
+    margin: 0;
+    font-size: 1.2em;
+}
+
+.dismiss-btn {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.dismiss-btn:hover {
+    background: rgba(255,255,255,0.2);
+}
+
+.update-content {
+    padding: 16px 20px 20px;
+}
+
+.update-content p {
+    margin: 0 0 12px 0;
+    line-height: 1.4;
+}
+
+.release-notes {
+    margin: 12px 0;
+}
+
+.release-notes summary {
+    cursor: pointer;
+    font-weight: 500;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+
+.notes-content {
+    padding: 12px 0;
+    font-size: 0.9em;
+    line-height: 1.5;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.update-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.btn-update {
+    flex: 1;
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-update:hover {
+    background: rgba(255,255,255,0.3);
+    transform: translateY(-1px);
+}
+
+.btn-later {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-later:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOutRight {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+.update-notification.hiding {
+    animation: slideOutRight 0.3s ease-in forwards;
+}
+</style>
+
+<script>
+function startUpdate() {
+    // Redirect to update installation page
+    window.location.href = '/update/install-page';
+}
+
+function dismissUpdate() {
+    // Add hiding animation
+    const notification = document.getElementById('updateNotification');
+    notification.classList.add('hiding');
+
+    // Dismiss on server side
+    fetch('/update/dismiss', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    });
+
+    // Remove after animation
+    setTimeout(() => {
+        notification.remove();
+    }, 300);
+}
+</script>
+{% endif %}

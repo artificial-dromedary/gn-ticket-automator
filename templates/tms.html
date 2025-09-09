@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Light Theme</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+</style>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+	<script>
+$(document).ready(function(){
+  $(".session h3").click(function(){
+    $(this).parent().hide();
+	$(this).find(":input").val("n");
+  });
+
+  $("#show_all").click(function(){
+	  $(".session").show();
+
+  });
+});
+</script>
+</head>
+<body>
+<!-- Main Container -->
+<div class="container"> 
+  <!-- Header -->
+  <header class="header">
+    <h4 class="logo">Make my Zoom &amp; TMS</h4>
+	  
+  </header>
+  <!-- Hero Section -->
+  <section class="intro">
+    <div class="column">
+      <h3>Serei</h3>
+		<h2 id="show_all">Show hidden items</h2>
+       </div>
+	    </section>
+	<form id="zoom_booker" name="zoom_booker" action="/zoom/book_sessions" method="post">
+		<div class="column full green">
+	  
+	    <p>Make Zooms</p>
+	    <p>
+	      <input type="submit" name="make_zoom" id="make_zoom" value="Make Zooms">
+       </p>
+	  </div>
+	</form>
+		
+  <form id="booker" name="booker" action="/tms/book_sessions" method="post">
+	 <div class="column full green">
+	  
+	    <p>Sessions show here when their status is set to &quot;Confirmed for Booking&quot;. Check that these are ready, then click the button.</p>
+	    <p>
+	      <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions">
+       </p>
+	  </div>
+	  
+
+  <!-- Session Gallery Section -->
+  <div class="gallery">
+	  {% for session in all_sessions %}
+
+	  <div class="session">
+
+		<h3 style="text-align: right;">
+		  <input name="book_me" type="hidden" id="{{session.s_id}}" value="y">
+			<input name="airtable_id" type="hidden" id="{{session.s_id}}+'airtable'" value="{{session.s_id}}">
+	    X</h3>
+      <h4>{{ session.title }}</h4>
+		  <p class="tag">{{ session.school }}<br>{{ session.start_time.astimezone() }}</br>
+      </p>
+	  
+		<div class="column">Grades listed
+		{% if session.grades=="Unknown" %}
+		  <p><img src="{{ url_for('static', filename='images/no.png') }}"></p>
+		  {% else %}
+		  <p><img src="{{ url_for('static', filename='images/yes.png') }}"></p>
+		  {% endif %}
+		</div>	
+		<div class="column"># students listed
+		{% if session.num_students==1 %}
+		  <p><img src="{{ url_for('static', filename='images/no.png') }}"></p>
+		  {% else %}
+		  <p><img src="{{ url_for('static', filename='images/yes.png') }}"></p>
+		  {% endif %}
+		</div>	
+    </div>
+	  {% endfor %}
+	  
+  </div>
+	</form>
+  
+<!-- Main Container Ends -->
+</body>
+</html>

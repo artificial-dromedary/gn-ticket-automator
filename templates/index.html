@@ -1,0 +1,306 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CILC Auto Booker</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.form-section {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    border-left: 4px solid #6DC7D0;
+}
+
+.booking-button {
+    background: linear-gradient(45deg, #6DC7D0, #52BAD5);
+    color: white;
+    border: none;
+    padding: 15px 30px;
+    font-size: 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.booking-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 8px rgba(0,0,0,0.15);
+}
+
+.nav-button {
+    background: #5D5E5D;
+    color: white;
+    padding: 10px 20px;
+    text-decoration: none;
+    border-radius: 4px;
+    margin: 0 10px;
+    display: inline-block;
+    transition: background 0.3s ease;
+}
+
+.nav-button:hover {
+    background: #404041;
+    color: white;
+    text-decoration: none;
+}
+
+.session-count {
+    background: #e8f4f8;
+    border: 2px solid #6DC7D0;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 15px 0;
+    text-align: center;
+    font-weight: bold;
+    color: #5D5E5D;
+}
+
+.session.selected {
+    border: 3px solid #52BAD5;
+    background-color: #e8f4f8;
+}
+
+.checkbox-group {
+    text-align: left;
+    margin: 15px 0;
+}
+
+.checkbox-group label {
+    display: block;
+    margin: 8px 0;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.radio-group {
+    text-align: left;
+    margin: 15px 0;
+}
+
+.radio-group label {
+    display: block;
+    margin: 8px 0;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.form-button {
+    background: #6DC7D0;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.form-button:hover {
+    background: #52BAD5;
+}
+</style>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script>
+$(document).ready(function(){
+    // Session selection/hiding functionality
+    $(".session h3").click(function(){
+        $(this).parent().hide();
+        $(this).find(":input").val("n");
+        updateSessionCount();
+    });
+
+    $("#show_all").click(function(){
+        $(".session").show();
+        $(".session input[name='book_me']").val("y");
+        updateSessionCount();
+    });
+    
+    // Update session count when sessions are loaded
+    updateSessionCount();
+    
+    // Form validation
+    $("#search_filter").submit(function(e) {
+        if (!$("input[name='user_select']:checked").val()) {
+            alert("Please select a user (Katie or Serei)");
+            e.preventDefault();
+            return false;
+        }
+        
+        if ($("input[name='filters']:checked").length === 0) {
+            alert("Please select at least one status filter");
+            e.preventDefault();
+            return false;
+        }
+        
+        return true;
+    });
+    
+    {% if ready_to_book %}
+    // Booking form validation
+    $("#booker").submit(function(e) {
+        const selectedSessions = $(".session:visible").length;
+        
+        if (selectedSessions === 0) {
+            alert("Please select at least one session to book on CILC.");
+            e.preventDefault();
+            return false;
+        }
+        
+        if (!confirm(`Are you sure you want to request ${selectedSessions} session(s) on CILC?`)) {
+            e.preventDefault();
+            return false;
+        }
+        
+        return true;
+    });
+    {% endif %}
+});
+
+function updateSessionCount() {
+    {% if ready_to_book %}
+    const visibleSessions = $(".session:visible").length;
+    const totalSessions = $(".session").length;
+    
+    $("#sessionCount").text(visibleSessions);
+    $("#totalSessions").text(totalSessions);
+    
+    if (visibleSessions === 0) {
+        $("#book_sessions").prop('disabled', true);
+    } else {
+        $("#book_sessions").prop('disabled', false);
+    }
+    {% endif %}
+}
+</script>
+</head>
+<body>
+<!-- Main Container -->
+<div class="container"> 
+  <!-- Header -->
+  <header class="header">
+    <h4 class="logo">CILC Auto Booker</h4>
+    <div style="text-align: center; padding: 10px;">
+      <a href="/gn_ticket" class="nav-button">GN Ticket Booker</a>
+    </div>
+  </header>
+  
+  <!-- Hero Section -->
+  <section class="intro">
+    <div class="column">
+      <h3>Welcome!</h3>
+      <h2 id="show_all" style="cursor: pointer;">Show hidden items</h2>
+    </div>
+    <div class="column">
+      <div class="form-section">
+        <p><strong>Get sessions with status:</strong></p>
+        <form id="search_filter" name="search_filter" action="/sessions" method="post">
+          <div class="radio-group">
+            <label>
+              <input type="radio" name="user_select" value="Katie" id="user_select_0">
+              Katie
+            </label>
+            <label>
+              <input type="radio" name="user_select" value="Serei" id="user_select_1" checked>
+              Serei
+            </label>
+          </div>
+          
+          <div class="checkbox-group">
+            <label>
+              <input type="checkbox" name="filters" value="'Requested'" id="CheckboxGroup1_3">
+              Requested
+            </label>
+            <label>
+              <input type="checkbox" name="filters" value="'In Planning'" id="CheckboxGroup1_1" checked>
+              In Planning*
+            </label>
+            <label>
+              <input type="checkbox" name="filters" value="'Confirmed for Booking'" id="CheckboxGroup1_2" checked>
+              Confirmed for Booking
+            </label>
+            <label>
+              <input type="checkbox" name="filters" value="'In Development'" id="CheckboxGroup1_0">
+              In Development
+            </label>
+            <label>
+              <input type="checkbox" name="filters" value="'Booked'" id="CheckboxGroup1_4">
+              Booked
+            </label>
+          </div>
+          
+          <input type="submit" name="submit" id="submit" value="Get Sessions" class="form-button">
+        </form>
+      </div>
+    </div>
+  </section>
+	
+  {% if ready_to_book %}
+  <!-- Session Count Display -->
+  <div class="session-count">
+    <span id="sessionCount">{{ all_sessions|length }}</span> of <span id="totalSessions">{{ all_sessions|length }}</span> sessions ready for CILC booking
+  </div>
+  
+  <form id="booker" name="booker" action="/book" method="post">
+    <div class="column full green">
+      <p><strong>Review and Request Sessions on CILC</strong></p>
+      <p>Delete unwanted sessions by clicking the "X", then request the remaining sessions.</p>
+      <input type="submit" name="book_sessions" id="book_sessions" value="Request Selected Sessions on CILC" class="booking-button">
+    </div>
+  {% endif %}
+
+  <!-- Session Gallery Section -->
+  <div class="gallery">
+    {% for session in all_sessions %}
+    <div class="session">
+      <h3 style="text-align: right; cursor: pointer;" title="Click to hide this session">
+        <input name="book_me" type="hidden" id="{{session.s_id}}" value="y">
+        <input name="airtable_id" type="hidden" id="{{session.s_id}}+'airtable'" value="{{session.s_id}}">
+        X
+      </h3>
+      <h4>{{ session.title }}</h4>
+      <p class="tag">{{ session.school }}<br>{{ session.start_time.astimezone() }}</p>
+      
+      <div class="column">Grades listed
+        {% if session.grades=="Unknown" %}
+          <p><img src="{{ url_for('static', filename='images/no.png') }}" alt="No"></p>
+        {% else %}
+          <p><img src="{{ url_for('static', filename='images/yes.png') }}" alt="Yes"></p>
+        {% endif %}
+      </div>	
+      <div class="column"># students listed
+        {% if session.num_students==1 %}
+          <p><img src="{{ url_for('static', filename='images/no.png') }}" alt="No"></p>
+        {% else %}
+          <p><img src="{{ url_for('static', filename='images/yes.png') }}" alt="Yes"></p>
+        {% endif %}
+      </div>	
+    </div>
+    {% endfor %}
+  </div>
+  
+  {% if ready_to_book %}
+  </form>
+  {% endif %}
+
+  <!-- Instructions -->
+  {% if not ready_to_book %}
+  <div style="background: #f8f9fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #6DC7D0;">
+    <h4>How to use this tool:</h4>
+    <ol style="text-align: left; max-width: 800px; margin: 0 auto;">
+      <li><strong>Select user:</strong> Choose Katie or Serei</li>
+      <li><strong>Choose status filters:</strong> Select which session statuses you want to see</li>
+      <li><strong>Get sessions:</strong> Click "Get Sessions" to load matching sessions</li>
+      <li><strong>Review and book:</strong> Remove unwanted sessions and submit for CILC booking</li>
+    </ol>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Main Container Ends -->
+</body>
+</html>

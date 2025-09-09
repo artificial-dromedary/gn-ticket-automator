@@ -1,0 +1,188 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Setup Required - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.setup-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.warning-box {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 8px;
+    padding: 30px;
+    margin: 20px 0;
+    color: #856404;
+    text-align: center;
+}
+
+.instruction-step {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 30px;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.step-number {
+    background: #6DC7D0;
+    color: white;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    margin-right: 15px;
+}
+
+.code-block {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+    font-family: monospace;
+    font-size: 14px;
+    margin: 10px 0;
+    overflow-x: auto;
+}
+
+.highlight {
+    background: #fff3cd;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="header">
+    <h4 class="logo">Admin Setup Required - GN Ticket Automator</h4>
+  </header>
+  
+  <div class="setup-container">
+    <div class="warning-box">
+      <h2>🔧 Administrator Setup Required</h2>
+      <p><strong>Google OAuth credentials need to be configured before users can log in.</strong></p>
+      <p>This is a one-time setup that should be done by the system administrator.</p>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">1</span>Create Google Cloud Project</h3>
+      <ol>
+        <li>Go to the <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a></li>
+        <li>Create a new project or select an existing one</li>
+        <li>Name it "GN Ticket Automator" or similar</li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">2</span>Enable APIs</h3>
+      <ol>
+        <li>In your Google Cloud project, go to "APIs & Services" → "Library"</li>
+        <li>Search for and enable "Google+ API"</li>
+        <li>Also enable "Google OAuth2 API" if available</li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">3</span>Create OAuth Credentials</h3>
+      <ol>
+        <li>Go to "APIs & Services" → "Credentials"</li>
+        <li>Click "Create Credentials" → "OAuth client ID"</li>
+        <li>Choose "Web application"</li>
+        <li>Name it "GN Ticket Automator"</li>
+        <li>Add authorized redirect URIs:
+          <div class="code-block">
+            http://localhost:5000/oauth/callback<br>
+            https://yourdomain.com/oauth/callback
+          </div>
+        </li>
+        <li>Click "Create" and copy the <strong>Client ID</strong> and <strong>Client Secret</strong></li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">4</span>Configure OAuth Consent Screen</h3>
+      <ol>
+        <li>Go to "APIs & Services" → "OAuth consent screen"</li>
+        <li>Choose "Internal" for organization use only</li>
+        <li>Fill in required information:
+          <ul>
+            <li><strong>App name:</strong> GN Ticket Automator</li>
+            <li><strong>User support email:</strong> Admin email</li>
+            <li><strong>Authorized domains:</strong> takingitglobal.org</li>
+          </ul>
+        </li>
+        <li>Add scopes: email, profile, openid</li>
+      </ol>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">5</span>Update Application Code</h3>
+      <p>Edit the <code class="highlight">main.py</code> file and replace these lines:</p>
+      
+      <div class="code-block">
+# Find these lines in main.py:<br>
+GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE"<br>
+GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET_HERE"<br><br>
+
+# Replace with your actual credentials:<br>
+GOOGLE_CLIENT_ID = "your_actual_client_id_from_google_cloud"<br>
+GOOGLE_CLIENT_SECRET = "your_actual_client_secret_from_google_cloud"
+      </div>
+      
+      <p><strong>Security Note:</strong> Keep these credentials secure and never commit them to version control.</p>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">6</span>Update Allowed Domains (Optional)</h3>
+      <p>If you want to allow users from domains other than takingitglobal.org, edit this line in <code class="highlight">main.py</code>:</p>
+      
+      <div class="code-block">
+# Current setting:<br>
+ALLOWED_DOMAINS = ["takingitglobal.org"]<br><br>
+
+# To allow multiple domains:<br>
+ALLOWED_DOMAINS = ["takingitglobal.org", "yourdomain.com"]
+      </div>
+    </div>
+
+    <div class="instruction-step">
+      <h3><span class="step-number">7</span>Test the Setup</h3>
+      <ol>
+        <li>Save the <code class="highlight">main.py</code> file with your OAuth credentials</li>
+        <li>Restart the application</li>
+        <li>Visit the homepage - Google login should now work</li>
+        <li>Test with a user from your allowed domain</li>
+      </ol>
+    </div>
+
+    <div style="background: #d4edda; padding: 20px; border-radius: 8px; margin: 30px 0;">
+      <h4>✅ After Setup Complete:</h4>
+      <ul>
+        <li>Users can simply run the app and sign in with Google</li>
+        <li>No technical setup required for individual users</li>
+        <li>Users only need to enter their personal credentials (Airtable API key, etc.)</li>
+        <li>The app can be distributed as a simple download</li>
+      </ul>
+    </div>
+
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 30px 0; text-align: center;">
+      <h4>Need Help?</h4>
+      <p>If you encounter issues during setup, check the Google Cloud Console documentation or ensure all steps above are completed correctly.</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

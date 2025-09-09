@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access Denied - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style type="text/css">
+.error-container {
+    max-width: 600px;
+    margin: 50px auto;
+    padding: 20px;
+    text-align: center;
+}
+
+.access-denied-box {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+    padding: 30px;
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.access-denied-icon {
+    font-size: 48px;
+    margin-bottom: 20px;
+}
+
+.allowed-domains {
+    background: #e8f4f8;
+    border: 1px solid #6DC7D0;
+    border-radius: 4px;
+    padding: 15px;
+    margin: 20px 0;
+}
+
+.try-again-button {
+    background: #6DC7D0;
+    color: white;
+    padding: 12px 24px;
+    text-decoration: none;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 20px 10px;
+    transition: background 0.3s ease;
+}
+
+.try-again-button:hover {
+    background: #52BAD5;
+    color: white;
+    text-decoration: none;
+}
+
+.home-button {
+    background: #5D5E5D;
+    color: white;
+    padding: 12px 24px;
+    text-decoration: none;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 20px 10px;
+    transition: background 0.3s ease;
+}
+
+.home-button:hover {
+    background: #404041;
+    color: white;
+    text-decoration: none;
+}
+
+.user-email {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 10px;
+    font-family: monospace;
+    margin: 10px 0;
+    word-break: break-all;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="header">
+    <h4 class="logo">GN Ticket Automator</h4>
+  </header>
+  
+  <div class="error-container">
+    <div class="access-denied-box">
+      <div class="access-denied-icon">🚫</div>
+      <h2>Access Denied</h2>
+      <p>Sorry, your email address is not authorized to use this application.</p>
+      
+      <h4>Your email:</h4>
+      <div class="user-email">{{ email }}</div>
+      
+      <div class="allowed-domains">
+        <h4>✅ Authorized Email Domains:</h4>
+        <ul style="list-style: none; padding: 0;">
+          {% for domain in allowed_domains %}
+          <li>📧 @{{ domain }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      
+      <h4>What to do:</h4>
+      <ul style="text-align: left; margin: 20px auto; max-width: 400px;">
+        <li>Make sure you're signing in with your work email address</li>
+        <li>Contact your administrator if you should have access</li>
+        <li>Try logging in with a different Google account</li>
+      </ul>
+    </div>
+    
+    <div>
+      <a href="/login" class="try-again-button">Try Different Account</a>
+      <a href="/" class="home-button">Go Home</a>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 30px 0;">
+      <h4>For Administrators:</h4>
+      <p style="font-size: 14px; color: #666;">
+        To add new email domains, edit the <code>ALLOWED_DOMAINS</code> list in <code>main.py</code> 
+        and restart the application.
+      </p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

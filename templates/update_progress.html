@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Installing Update - GN Ticket Automator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .update-container {
+            text-align: center;
+            max-width: 500px;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .update-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+
+        .update-title {
+            font-size: 2em;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .update-subtitle {
+            font-size: 1.1em;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+
+        .progress-container {
+            margin: 30px 0;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            border-radius: 6px;
+            transition: width 0.5s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 1.1em;
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .progress-percentage {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .status-message {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            font-size: 0.95em;
+            line-height: 1.4;
+        }
+
+        .success-state {
+            animation: checkmark 0.6s ease-in-out;
+        }
+
+        .error-state {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+        }
+
+        .complete-actions {
+            margin-top: 25px;
+            display: none;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 500;
+            transition: all 0.3s;
+            margin: 0 8px;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .btn-primary {
+            background: rgba(76, 175, 80, 0.8);
+            border-color: #4CAF50;
+        }
+
+        .btn-primary:hover {
+            background: #4CAF50;
+        }
+
+        .loading-dots {
+            display: inline-flex;
+            gap: 4px;
+        }
+
+        .loading-dots span {
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            animation: loadingDots 1.4s infinite ease-in-out;
+        }
+
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        @keyframes loadingDots {
+            0%, 80%, 100% {
+                transform: scale(0.8);
+                opacity: 0.5;
+            }
+            40% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        @keyframes checkmark {
+            0% { transform: scale(0.8); opacity: 0; }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .spinning {
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="update-container">
+        <div id="updateIcon" class="update-icon">📦</div>
+        <h1 class="update-title">Installing Update</h1>
+        <p class="update-subtitle">Please wait while we update GN Ticket Automator</p>
+        
+        <div class="progress-container">
+            <div id="progressText" class="progress-text">Preparing update...</div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <div id="progressPercentage" class="progress-percentage">0%</div>
+        </div>
+        
+        <div id="statusMessage" class="status-message">
+            <div class="loading-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+            Initializing update process...
+        </div>
+        
+        <div id="completeActions" class="complete-actions">
+            <button onclick="restartApp()" class="btn btn-primary">Restart App</button>
+            <button onclick="goBack()" class="btn">Continue Without Restart</button>
+        </div>
+    </div>
+
+    <script>
+        let updateComplete = false;
+        let hasError = false;
+
+        // Start the update process
+        function startUpdate() {
+            fetch('/update/install', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log('Update started successfully');
+                    pollProgress();
+                } else {
+                    showError('Failed to start update: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error starting update:', error);
+                showError('Failed to start update: ' + error.message);
+            });
+        }
+
+        // Poll for progress updates
+        function pollProgress() {
+            if (updateComplete) return;
+
+            fetch('/update/progress')
+                .then(response => response.json())
+                .then(data => {
+                    updateProgress(data);
+                    
+                    if (!data.complete && !hasError) {
+                        setTimeout(pollProgress, 1000); // Poll every second
+                    }
+                })
+                .catch(error => {
+                    console.error('Error polling progress:', error);
+                    setTimeout(pollProgress, 2000); // Retry after 2 seconds
+                });
+        }
+
+        // Update the UI with progress data
+        function updateProgress(data) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const progressPercentage = document.getElementById('progressPercentage');
+            const statusMessage = document.getElementById('statusMessage');
+            const updateIcon = document.getElementById('updateIcon');
+            const completeActions = document.getElementById('completeActions');
+
+            // Update progress bar
+            progressFill.style.width = data.progress + '%';
+            progressPercentage.textContent = Math.round(data.progress) + '%';
+            
+            // Update text
+            progressText.textContent = data.message || 'Processing...';
+            
+            // Update status message
+            statusMessage.innerHTML = data.message || 'Processing update...';
+            
+            if (data.complete) {
+                updateComplete = true;
+                
+                if (data.error) {
+                    // Error state
+                    showError(data.message || 'Update failed');
+                } else {
+                    // Success state
+                    showSuccess();
+                }
+            } else {
+                // Still in progress - show loading animation
+                updateIcon.className = 'update-icon spinning';
+                updateIcon.textContent = '⚙️';
+            }
+        }
+
+        function showSuccess() {
+            const updateIcon = document.getElementById('updateIcon');
+            const statusMessage = document.getElementById('statusMessage');
+            const completeActions = document.getElementById('completeActions');
+            const container = document.querySelector('.update-container');
+
+            updateIcon.className = 'update-icon success-state';
+            updateIcon.textContent = '✅';
+            
+            statusMessage.innerHTML = '🎉 Update completed successfully!<br>Please restart the app to use the new version.';
+            statusMessage.classList.add('success-state');
+            
+            completeActions.style.display = 'block';
+        }
+
+        function showError(message) {
+            const updateIcon = document.getElementById('updateIcon');
+            const statusMessage = document.getElementById('statusMessage');
+            const progressText = document.getElementById('progressText');
+            
+            hasError = true;
+            updateComplete = true;
+            
+            updateIcon.className = 'update-icon';
+            updateIcon.textContent = '❌';
+            
+            progressText.textContent = 'Update failed';
+            statusMessage.innerHTML = message;
+            statusMessage.classList.add('error-state');
+            
+            // Show option to go back
+            const completeActions = document.getElementById('completeActions');
+            completeActions.innerHTML = '<button onclick="goBack()" class="btn">Return to App</button>';
+            completeActions.style.display = 'block';
+        }
+
+        function restartApp() {
+            // Close the current window - user will need to restart manually
+            alert('Please quit and restart GN Ticket Automator to complete the update.');
+            window.close();
+        }
+
+        function goBack() {
+            window.location.href = '/gn_ticket';
+        }
+
+        // Start the update process when page loads
+        window.addEventListener('load', function() {
+            // Small delay to show the UI before starting
+            setTimeout(startUpdate, 1000);
+        });
+    </script>
+</body>
+</html>

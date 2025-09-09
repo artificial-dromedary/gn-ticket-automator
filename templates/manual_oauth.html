@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login with Google</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            max-width: 600px; 
+            margin: 100px auto; 
+            padding: 20px; 
+            text-align: center;
+        }
+        .auth-box {
+            border: 2px solid #4285f4;
+            border-radius: 8px;
+            padding: 30px;
+            background: #f8f9ff;
+        }
+        .auth-url {
+            background: white;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            word-break: break-all;
+            font-size: 12px;
+        }
+        .copy-button {
+            background: #4285f4;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        .copy-button:hover {
+            background: #3367d6;
+        }
+        .instructions {
+            text-align: left;
+            margin: 20px 0;
+            background: white;
+            padding: 15px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-box">
+        <h2>Login with Google</h2>
+        
+        <div class="instructions">
+            <p><strong>Instructions:</strong></p>
+            <ol>
+                <li>Copy the URL below</li>
+                <li>Open it in the same browser where you're signed into Google</li>
+                <li>Complete the Google login</li>
+                <li>You'll be redirected back to this app</li>
+            </ol>
+        </div>
+        
+        <div class="auth-url" id="authUrl">{{ auth_url }}</div>
+        
+        <button class="copy-button" onclick="copyUrl()">Copy URL</button>
+        <button class="copy-button" onclick="openUrl()">Open in New Tab</button>
+    </div>
+    
+    <script>
+        function copyUrl() {
+            const url = document.getElementById('authUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                alert('URL copied to clipboard!');
+            });
+        }
+        
+        function openUrl() {
+            const url = document.getElementById('authUrl').textContent;
+            window.open(url, '_blank');
+        }
+    </script>
+</body>
+</html>

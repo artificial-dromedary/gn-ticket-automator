@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>No Updates Available - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style>
+.update-container {
+    max-width: 600px;
+    margin: 50px auto;
+    padding: 30px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    text-align: center;
+}
+.check-icon {
+    font-size: 48px;
+    color: #28a745;
+    margin-bottom: 20px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <header class="header">
+        <h4 class="logo">GN Ticket Automator - Update Check</h4>
+    </header>
+    
+    <div class="update-container">
+        <div class="check-icon">✅</div>
+        <h2>You're Up to Date!</h2>
+        <p>You have the latest version installed.</p>
+        <p><strong>Current version: {{ current_version }}</strong></p>
+        
+        <p style="margin-top: 30px;">
+            <a href="/gn_ticket" class="btn btn-primary">Back to App</a>
+        </p>
+    </div>
+</div>
+</body>
+</html>
