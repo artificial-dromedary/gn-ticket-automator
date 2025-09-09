@@ -1,5 +1,4 @@
 import json
-import os
 import sqlite3
 from cryptography.fernet import Fernet
 import keyring
@@ -36,7 +35,6 @@ class UserProfileManager:
                 airtable_api_key_encrypted TEXT,
                 servicenow_password_encrypted TEXT,
                 totp_secret_encrypted TEXT,
-                chatgpt_api_key_encrypted TEXT,
                 preferences TEXT
             )
         ''')
@@ -44,15 +42,10 @@ class UserProfileManager:
         conn.commit()
         conn.close()
 
-        # Add the new column if it doesn't exist (for existing databases)
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('ALTER TABLE user_profiles ADD COLUMN chatgpt_api_key_encrypted TEXT')
-            conn.commit()
-            conn.close()
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        # The table previously included a ChatGPT API key column. Existing
+        # installations may still have this column, but new databases no
+        # longer create it. When saving profiles we only reference the
+        # columns defined above so additional columns are ignored.
 
     def _get_encryption_key(self, email):
         """Get or create encryption key for user from system keyring."""
@@ -104,19 +97,27 @@ class UserProfileManager:
         airtable_key_enc = self._encrypt_data(profile_data.get('airtable_api_key'), email)
         servicenow_pw_enc = self._encrypt_data(profile_data.get('servicenow_password'), email)
         totp_secret_enc = self._encrypt_data(profile_data.get('totp_secret'), email)
-        chatgpt_key_enc = self._encrypt_data(profile_data.get('chatgpt_api_key'), email)
 
         preferences = json.dumps(profile_data.get('preferences', {}))
         now = datetime.now().isoformat()
 
         cursor.execute('''
-            INSERT OR REPLACE INTO user_profiles 
-            (email, created_at, updated_at, airtable_api_key_encrypted, 
-             servicenow_password_encrypted, totp_secret_encrypted, chatgpt_api_key_encrypted, preferences)
-            VALUES (?, 
+            INSERT OR REPLACE INTO user_profiles
+            (email, created_at, updated_at, airtable_api_key_encrypted,
+             servicenow_password_encrypted, totp_secret_encrypted, preferences)
+            VALUES (?,
                     COALESCE((SELECT created_at FROM user_profiles WHERE email = ?), ?),
                     ?, ?, ?, ?, ?)
-        ''', (email, email, now, now, airtable_key_enc, servicenow_pw_enc, totp_secret_enc, preferences))
+        ''', (
+            email,
+            email,
+            now,
+            now,
+            airtable_key_enc,
+            servicenow_pw_enc,
+            totp_secret_enc,
+            preferences,
+        ))
 
         conn.commit()
         conn.close()
@@ -127,8 +128,8 @@ class UserProfileManager:
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT airtable_api_key_encrypted, servicenow_password_encrypted, 
-                   totp_secret_encrypted, chatgpt_api_key_encrypted, preferences
+            SELECT airtable_api_key_encrypted, servicenow_password_encrypted,
+                   totp_secret_encrypted, preferences
             FROM user_profiles WHERE email = ?
         ''', (email,))
 
@@ -138,13 +139,12 @@ class UserProfileManager:
         if not result:
             return None
 
-        airtable_key_enc, servicenow_pw_enc, totp_secret_enc, chatgpt_key_enc, preferences_json = result
+        airtable_key_enc, servicenow_pw_enc, totp_secret_enc, preferences_json = result
 
         profile = {
             'airtable_api_key': self._decrypt_data(airtable_key_enc, email),
             'servicenow_password': self._decrypt_data(servicenow_pw_enc, email),
             'totp_secret': self._decrypt_data(totp_secret_enc, email),
-            'chatgpt_api_key': self._decrypt_data(chatgpt_key_enc, email),
             'preferences': json.loads(preferences_json) if preferences_json else {},
         }
 
