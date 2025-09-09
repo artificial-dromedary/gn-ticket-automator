@@ -3,6 +3,8 @@ import time
 from datetime import timedelta
 import json
 import pyotp
+import difflib
+import re
 
 import requests
 from pytz import timezone
@@ -18,6 +20,8 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.alert import Alert
+
+from site_list import AVAILABLE_SITES
 
 # Progress tracking function placeholder
 set_progress_func = lambda *args, **kwargs: None
@@ -515,149 +519,114 @@ def get_site_name(community, building):
     return f"{community} {building_first}".strip()
 
 
+def basic_site_match(community, school, building, all_site_options=AVAILABLE_SITES):
+    """Quickly match site using simple heuristics before invoking ChatGPT."""
+    candidates = []
+    building_first = get_first_word(building)
+    school_first = get_first_word(school)
+
+    candidates.append(f"{community} {building_first}".strip())
+    candidates.append(f"{community} {school_first}".strip())
+    candidates.extend([community, building_first, school_first])
+
+    # remove duplicates and empties while preserving order
+    seen = set()
+    cleaned = []
+    for c in candidates:
+        if c and c not in seen:
+            cleaned.append(c)
+            seen.add(c)
+
+    lower_map = {s.lower(): s for s in all_site_options}
+
+    def tokenize(text):
+        return [w.strip('.,;:!?-') for w in text.lower().split() if w.strip('.,;:!?-')]
+
+    community_tokens = set(tokenize(community))
+    ref_tokens = set(tokenize(school)) | set(tokenize(building))
+    # remove tokens similar to the community to focus on school/building descriptors
+    filtered_tokens = set()
+    for t in ref_tokens:
+        if not any(difflib.SequenceMatcher(None, t, c).ratio() >= 0.8 for c in community_tokens):
+            filtered_tokens.add(t)
+
+    def score_site(site):
+        site_tokens = set(tokenize(site))
+        return len(site_tokens & filtered_tokens)
+
+    # Exact match
+    for cand in cleaned:
+        if cand.lower() in lower_map:
+            return lower_map[cand.lower()]
+
+    # Substring match with backward scoring
+    for cand in cleaned:
+        matches = [site for site in all_site_options if cand.lower() in site.lower()]
+        if matches:
+            if len(matches) == 1:
+                return matches[0]
+            # choose the match with highest overlap with school/building tokens
+            best = max(matches, key=score_site)
+            if score_site(best) > 0:
+                return best
+            return matches[0]
+
+    # Fuzzy match
+    site_lowers = list(lower_map.keys())
+    for cand in cleaned:
+        matches = difflib.get_close_matches(cand.lower(), site_lowers, n=1, cutoff=0.85)
+        if matches:
+            return lower_map[matches[0]]
+
+    return None
+
+
 def smart_site_selection(driver, cn_session, wait_time=1.5, progress_session_id=None, chatgpt_api_key=None,
                          allow_manual_selection=False, headless_mode=True):
-    """
-    Intelligently select the site field by first collecting all options, then matching.
-    Includes manual intervention fallback.
-    """
-    element_id = "s2id_sp_formfield_select_sites"  # The ID of the outer container/clickable element
+    """Intelligently select the site field using quick heuristics and ChatGPT fallback."""
+    element_id = "s2id_sp_formfield_select_sites"
 
     set_progress_func(progress_session_id,
                       f"DEBUG SITE: Starting smart site selection for '{cn_session.school}' in '{cn_session.community}'",
                       None, None)
 
-    # Step 1: Get all available options from the dropdown
-    all_site_options = get_all_dropdown_options_from_html(driver, element_id)
-
-    if not all_site_options:
+    quick_match = basic_site_match(cn_session.community.strip(), cn_session.school.strip(),
+                                   cn_session.building.strip())
+    if quick_match:
         set_progress_func(progress_session_id,
-                          "DEBUG SITE: No site options could be retrieved. Cannot proceed with any automated or manual selection.",
-                          None, None, "error")
-        return False
-
-    # Step 2: Prepare candidate search terms for internal matching
-    candidates = []
-
-    # Special cases (exact matches)
-    if "Ataguttaaluk" in cn_session.school:
-        candidates.append("Igloolik")
-    if "Kugluktuk" in cn_session.school:
-        candidates.append("Kugluktuk")
-
-    # Generate combinations from Airtable data
-    community = cn_session.community.strip()
-    school = cn_session.school.strip()
-    building = cn_session.building.strip()
-
-    building_first_word = get_first_word(building)
-    building_first_two_words = get_first_two_words(building)  # Can be same as first word if only one word
-    school_first_word = get_first_word(school)
-    school_first_two_words = get_first_two_words(school)  # Can be same as first word if only one word
-
-    # Prioritized candidates (ordered from most specific to less specific combinations)
-    candidates.append(f"{community} {building_first_word}".strip())
-    if building_first_two_words and building_first_two_words != building_first_word:
-        candidates.append(f"{community} {building_first_two_words}".strip())
-    candidates.append(f"{community} {school_first_word}".strip())  # Community + School first word
-    if school_first_two_words and school_first_two_words != school_first_word:
-        candidates.append(f"{community} {school_first_two_words}".strip())
-
-    # Secondary candidates
-    candidates.append(building_first_word)
-    if building_first_two_words and building_first_two_words != building_first_word:
-        candidates.append(building_first_two_words)
-    candidates.append(school_first_word)
-    if school_first_two_words and school_first_two_words != school_first_word:
-        candidates.append(school_first_two_words)
-
-    candidates.append(community)
-
-    # Remove duplicates and empty strings, maintain order as much as possible
-    unique_candidates = []
-    [unique_candidates.append(x) for x in candidates if x and x not in unique_candidates]
-
-    set_progress_func(progress_session_id, f"DEBUG SITE: Internal Candidates (ordered): {unique_candidates}", None,
-                      None)
-
-    # Step 3: Iterate through candidates and find an exact match in all_site_options (code-driven)
-    found_exact_match = None
-    for candidate in unique_candidates:
-        if not candidate: continue  # Skip empty candidates
-        for option in all_site_options:
-            if option.strip().lower() == candidate.strip().lower():
-                found_exact_match = option
-                break
-        if found_exact_match:
-            break
-
-    if found_exact_match:
-        set_progress_func(progress_session_id,
-                          f"DEBUG SITE: Found exact match '{found_exact_match}'. Attempting selection...", None, None)
-        if try_dropdown_selection(driver, element_id, found_exact_match, wait_time):
-            set_progress_func(progress_session_id, f"DEBUG SITE: Successfully selected '{found_exact_match}'.", None,
-                              None)
+                          f"DEBUG SITE: Quick match found '{quick_match}'. Attempting selection...", None, None)
+        if try_dropdown_selection(driver, element_id, quick_match, wait_time):
+            set_progress_func(progress_session_id,
+                              f"DEBUG SITE: Successfully selected '{quick_match}'.", None, None)
             return True
         else:
             set_progress_func(progress_session_id,
-                              f"DEBUG SITE: Failed to select exact match '{found_exact_match}'. Clearing field and proceeding to next attempt.",
-                              None, None, "warning")
-            # If selection failed, reset the input field before next attempt
-            try_dropdown_selection(driver, element_id, "", 0.1)  # Clear the field
-            time.sleep(0.5)
+                              f"DEBUG SITE: Failed to select quick match '{quick_match}'.", None, None, "warning")
     else:
         set_progress_func(progress_session_id,
-                          "DEBUG SITE: No exact match found in internal candidate list. Proceeding to ChatGPT.", None,
-                          None)
+                          "DEBUG SITE: No quick match found. Proceeding to ChatGPT...", None, None)
 
-    # Step 4: ChatGPT-Assisted Matching (Filtered by Community)
-    # Filter options to only those containing the community name for more relevant ChatGPT suggestions
-    community_lower = cn_session.community.strip().lower()
-    community_filtered_options = [
-        option for option in all_site_options
-        if community_lower in option.strip().lower()
-    ]
-
-    if not community_filtered_options:
-        set_progress_func(progress_session_id,
-                          f"DEBUG SITE: No site options found containing community '{cn_session.community}'. Skipping ChatGPT for filtered list.",
-                          None, None, "warning")
-    else:
-        set_progress_func(progress_session_id,
-                          f"DEBUG SITE: Found {len(community_filtered_options)} options containing '{cn_session.community}'. Consulting ChatGPT.",
-                          None, None)
-
-    # Step 4: ChatGPT fallback if no exact match found or selection failed (only if options were retrieved)
-    # Use community_filtered_options for ChatGPT if available, otherwise use all_site_options
-    # Only proceed if chatgpt_api_key is available
     if chatgpt_api_key:
-        set_progress_func(progress_session_id, "DEBUG SITE: Calling ChatGPT for best match...", None, None)
-        target_options_for_chatgpt = community_filtered_options if community_filtered_options else all_site_options
-        best_match = ask_chatgpt_for_best_match(target_options_for_chatgpt, cn_session.community, cn_session.school,
-                                                chatgpt_api_key)
-
+        community_lower = cn_session.community.strip().lower()
+        community_filtered = [s for s in AVAILABLE_SITES if community_lower in s.lower()]
+        target_options = community_filtered if community_filtered else AVAILABLE_SITES
+        best_match = ask_chatgpt_for_best_match(target_options, cn_session.community, cn_session.school, chatgpt_api_key)
         if best_match:
             set_progress_func(progress_session_id,
                               f"DEBUG SITE: ChatGPT suggested '{best_match}'. Attempting selection...", None, None)
             if try_dropdown_selection(driver, element_id, best_match, wait_time):
                 set_progress_func(progress_session_id,
-                                  f"DEBUG SITE: Successfully selected ChatGPT's suggestion: '{best_match}'.", None,
-                                  None)
+                                  f"DEBUG SITE: Successfully selected ChatGPT's suggestion: '{best_match}'.", None, None)
                 return True
             else:
                 set_progress_func(progress_session_id,
-                                  f"DEBUG SITE: Failed to select ChatGPT's suggestion: '{best_match}'. Clearing field and proceeding.",
-                                  None, None, "warning")
-                # If selection failed, reset the input field before next attempt
-                try_dropdown_selection(driver, element_id, "", 0.1)  # Clear the field
-                time.sleep(0.5)
+                                  f"DEBUG SITE: Failed to select ChatGPT's suggestion: '{best_match}'.", None, None, "warning")
         else:
             set_progress_func(progress_session_id,
-                              "DEBUG SITE: ChatGPT couldn't determine a best match or suggested an invalid option.",
-                              None, None, "warning")
-    elif not chatgpt_api_key:  # Log if API key is missing
-        set_progress_func(progress_session_id, "DEBUG SITE: ChatGPT API key not configured. Skipping ChatGPT.", None,
-                          None, "warning")
+                              "DEBUG SITE: ChatGPT could not determine a match.", None, None, "warning")
+    else:
+        set_progress_func(progress_session_id,
+                          "DEBUG SITE: ChatGPT API key not configured. Skipping ChatGPT.", None, None, "warning")
 
     # Step 5: Manual Intervention
     if allow_manual_selection and not headless_mode:  # Only prompt for manual if enabled and browser is visible
