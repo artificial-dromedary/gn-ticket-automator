@@ -175,7 +175,7 @@
   </header>
   
   <div class="progress-container">
-    <h2>Processing {{ session_count }} session(s)...</h2>
+    <h2>Processing <span id="remainingSessions">{{ session_count }}</span> session(s)...</h2>
     
     <!-- Progress Bar -->
     <div class="progress-bar">
@@ -209,6 +209,8 @@
 
 <script>
 const progressSessionId = "{{ progress_session_id }}";
+const sessionCount = {{ session_count }};
+let remainingSessions = sessionCount;
 let eventSource = null;
 let isComplete = false;
 
@@ -238,12 +240,13 @@ function startProgressStream() {
     };
 }
 
-function updateWithNewEntry(entry) {
+function updateWithNewEntry(entry, skipCountdown = false) {
     const logContainer = document.getElementById('logContainer');
     const progressFill = document.getElementById('progressFill');
     const progressText = document.getElementById('progressText');
     const spinner = document.getElementById('spinner');
     const statusMessage = document.getElementById('statusMessage');
+    const remainingSpan = document.getElementById('remainingSessions');
 
     // 1. Find the previously active log entry and deactivate it
     const previousActive = logContainer.querySelector('.log-entry.active');
@@ -265,10 +268,8 @@ function updateWithNewEntry(entry) {
     // Append the new entry. Because of column-reverse, it appears at the top.
     logContainer.appendChild(logEntry);
 
-    // *** THE CRITICAL FIX IS HERE ***
-    // We must scroll to the BOTTOM of the container's content (scrollHeight)
-    // to make the newest item (which is visually at the top) visible.
-    logContainer.scrollTop = logContainer.scrollHeight;
+    // Auto-scroll to the top so the newest entry remains visible
+    logContainer.scrollTop = 0;
 
     // Remove the initial placeholder entry
     const initialEntry = document.getElementById('initialEntry');
@@ -286,15 +287,23 @@ function updateWithNewEntry(entry) {
         progressText.textContent = entry.message;
     }
 
-    // Handle completion or error state
-    if (entry.status === 'completed' || entry.status === 'error') {
+    // Update session countdown
+    if (!skipCountdown && entry.status && entry.status.includes('session-complete')) {
+        remainingSessions = Math.max(remainingSessions - 1, 0);
+        remainingSpan.textContent = remainingSessions;
+    }
+
+    // Handle completion or terminal error state
+    const isTerminalError = entry.status && entry.status.includes('error') && !entry.status.includes('session-complete');
+    const isCompleted = entry.status && entry.status.includes('completed');
+    if (isCompleted || isTerminalError) {
         isComplete = true;
         progressFill.style.width = '100%';
         spinner.style.display = 'none';
 
         logEntry.classList.remove('active'); // Stop pulsing on the final item
 
-        if (entry.status === 'completed') {
+        if (isCompleted && !isTerminalError) {
             statusMessage.innerHTML = '<div class="status-complete">✓ Booking process completed successfully!</div>';
         } else {
             statusMessage.innerHTML = '<div class="status-error">✗ An error occurred during the booking process.</div>';
@@ -322,14 +331,21 @@ function refreshProgress() {
                 logContainer.appendChild(logEntry);
             });
 
+            // Recalculate remaining sessions
+            const completedCount = data.filter(e => e.status && e.status.includes('session-complete')).length;
+            remainingSessions = Math.max(sessionCount - completedCount, 0);
+            document.getElementById('remainingSessions').textContent = remainingSessions;
+
             // Mark the last entry as active if the process is not complete
             const lastEntryData = data[data.length - 1];
-            if (lastEntryData.status !== 'completed' && lastEntryData.status !== 'error') {
+            const lastIsTerminalError = lastEntryData.status && lastEntryData.status.includes('error') && !lastEntryData.status.includes('session-complete');
+            const lastIsCompleted = lastEntryData.status && lastEntryData.status.includes('completed');
+            if (!(lastIsCompleted || lastIsTerminalError)) {
                 logContainer.lastChild.classList.add('active');
             }
 
-            // Also update the top text with the latest message
-            updateWithNewEntry(lastEntryData);
+            // Also update the top text with the latest message (without altering countdown)
+            updateWithNewEntry(lastEntryData, true);
         })
         .catch(error => {
             console.error('Error fetching progress:', error);
