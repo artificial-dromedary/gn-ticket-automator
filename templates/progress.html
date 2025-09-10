@@ -49,9 +49,6 @@
     background: white;
     font-family: monospace;
     font-size: 14px;
-    display: flex;
-    /* --- FIX: STACK LOGS VERTICALLY, NEWEST ON TOP --- */
-    flex-direction: column-reverse;
 }
 
 .log-entry {
@@ -64,13 +61,13 @@
     transition: background-color 0.5s ease;
 }
 
-/* --- NEW: Style for the currently active task --- */
+/* --- Style for the currently active task --- */
 .log-entry.active {
     border-left-color: #52BAD5;
     animation: slideDown 0.3s ease-in, pulse 2s infinite;
 }
 
-/* --- NEW: Pulsing animation to show the active task --- */
+/* --- Pulsing animation to show the active task --- */
 @keyframes pulse {
     0% {
         background-color: #f0f7f8;
@@ -83,8 +80,7 @@
     }
 }
 
-
-/* Animate new entries sliding in from top */
+/* Animate new entries sliding in */
 @keyframes slideDown {
     from {
         opacity: 0;
@@ -192,7 +188,7 @@
     <!-- Progress Log -->
     <h3>Progress Log:</h3>
     <div class="log-container" id="logContainer">
-      <!-- Initial entry will be at bottom (oldest) due to flex-direction: column-reverse -->
+      <!-- Initial entry will be at top; new events will append below -->
       <div class="log-entry" id="initialEntry">
         <span class="timestamp">--:--:--</span>
         Initializing booking process...
@@ -213,6 +209,7 @@ const sessionCount = {{ session_count }};
 let remainingSessions = sessionCount;
 let eventSource = null;
 let isComplete = false;
+let lastProcessedEntryIndex = 0; // Track what we've already processed
 
 function startProgressStream() {
     if (eventSource) {
@@ -224,7 +221,6 @@ function startProgressStream() {
     eventSource.onmessage = function(event) {
         try {
             const data = JSON.parse(event.data);
-            // This is the live-update function for individual messages
             updateWithNewEntry(data);
         } catch (e) {
             console.error('Error parsing progress data:', e);
@@ -240,7 +236,7 @@ function startProgressStream() {
     };
 }
 
-function updateWithNewEntry(entry, skipCountdown = false) {
+function updateWithNewEntry(entry, skipCountdown = false, skipLog = false) {
     const logContainer = document.getElementById('logContainer');
     const progressFill = document.getElementById('progressFill');
     const progressText = document.getElementById('progressText');
@@ -248,42 +244,37 @@ function updateWithNewEntry(entry, skipCountdown = false) {
     const statusMessage = document.getElementById('statusMessage');
     const remainingSpan = document.getElementById('remainingSessions');
 
-    // 1. Find the previously active log entry and deactivate it
-    const previousActive = logContainer.querySelector('.log-entry.active');
-    if (previousActive) {
-        previousActive.classList.remove('active');
+    if (!skipLog) {
+        // Remove active class from previous entry
+        const previousActive = logContainer.querySelector('.log-entry.active');
+        if (previousActive) {
+            previousActive.classList.remove('active');
+        }
+
+        // Create new log entry
+        const logEntry = document.createElement('div');
+        logEntry.className = `log-entry ${entry.status}`;
+        logEntry.innerHTML = `
+            <span class="timestamp">${entry.timestamp}</span>
+            ${entry.message}
+        `;
+        
+        // Make the new entry active
+        logEntry.classList.add('active');
+        
+        // Append to bottom (chronological order)
+        logContainer.appendChild(logEntry);
+
+        // Auto-scroll to show the latest entry
+        logContainer.scrollTop = logContainer.scrollHeight;
     }
 
-    // 2. Add new log entry
-    const logEntry = document.createElement('div');
-    logEntry.className = `log-entry ${entry.status}`;
-    logEntry.innerHTML = `
-        <span class="timestamp">${entry.timestamp}</span>
-        ${entry.message}
-    `;
-
-    // 3. Make the new entry the active one
-    logEntry.classList.add('active');
-
-    // Append the new entry. Because of column-reverse, it appears at the top.
-    logContainer.appendChild(logEntry);
-
-    // Auto-scroll to the top so the newest entry remains visible
-    logContainer.scrollTop = 0;
-
-    // Remove the initial placeholder entry
-    const initialEntry = document.getElementById('initialEntry');
-    if (initialEntry) {
-        initialEntry.remove();
-    }
-
-    // Update the top progress text and bar
+    // Update progress bar
     if (entry.step && entry.total_steps) {
         const percentage = (entry.step / entry.total_steps) * 100;
         progressFill.style.width = percentage + '%';
         progressText.textContent = `Step ${entry.step} of ${entry.total_steps}`;
     } else {
-        // This is the line that was updating the top text correctly
         progressText.textContent = entry.message;
     }
 
@@ -301,7 +292,10 @@ function updateWithNewEntry(entry, skipCountdown = false) {
         progressFill.style.width = '100%';
         spinner.style.display = 'none';
 
-        logEntry.classList.remove('active'); // Stop pulsing on the final item
+        const activeEntry = logContainer.querySelector('.log-entry.active');
+        if (activeEntry) {
+            activeEntry.classList.remove('active');
+        }
 
         if (isCompleted && !isTerminalError) {
             statusMessage.innerHTML = '<div class="status-complete">✓ Booking process completed successfully!</div>';
@@ -313,23 +307,33 @@ function updateWithNewEntry(entry, skipCountdown = false) {
     }
 }
 
-// --- IMPROVED AND MORE EFFICIENT REFRESH FUNCTION ---
 function refreshProgress() {
     fetch(`/progress-status/${progressSessionId}`)
         .then(response => response.json())
         .then(data => {
             if (!data || data.length === 0) return;
 
-            const logContainer = document.getElementById('logContainer');
-            logContainer.innerHTML = ''; // Clear the entire log
+            // Only append new entries that we haven't processed yet
+            const newEntries = data.slice(lastProcessedEntryIndex);
+            
+            newEntries.forEach(entry => {
+                // Remove active class from previous entry
+                const logContainer = document.getElementById('logContainer');
+                const previousActive = logContainer.querySelector('.log-entry.active');
+                if (previousActive) {
+                    previousActive.classList.remove('active');
+                }
 
-            // Rebuild the log from the full history
-            data.forEach(entry => {
+                // Create and append new entry
                 const logEntry = document.createElement('div');
                 logEntry.className = `log-entry ${entry.status}`;
                 logEntry.innerHTML = `<span class="timestamp">${entry.timestamp}</span> ${entry.message}`;
+                
                 logContainer.appendChild(logEntry);
             });
+
+            // Update our tracking index
+            lastProcessedEntryIndex = data.length;
 
             // Recalculate remaining sessions
             const completedCount = data.filter(e => e.status && e.status.includes('session-complete')).length;
@@ -337,15 +341,26 @@ function refreshProgress() {
             document.getElementById('remainingSessions').textContent = remainingSessions;
 
             // Mark the last entry as active if the process is not complete
-            const lastEntryData = data[data.length - 1];
-            const lastIsTerminalError = lastEntryData.status && lastEntryData.status.includes('error') && !lastEntryData.status.includes('session-complete');
-            const lastIsCompleted = lastEntryData.status && lastEntryData.status.includes('completed');
-            if (!(lastIsCompleted || lastIsTerminalError)) {
-                logContainer.lastChild.classList.add('active');
+            if (data.length > 0) {
+                const lastEntryData = data[data.length - 1];
+                const lastIsTerminalError = lastEntryData.status && lastEntryData.status.includes('error') && !lastEntryData.status.includes('session-complete');
+                const lastIsCompleted = lastEntryData.status && lastEntryData.status.includes('completed');
+                
+                if (!(lastIsCompleted || lastIsTerminalError)) {
+                    const logContainer = document.getElementById('logContainer');
+                    const lastEntry = logContainer.lastElementChild;
+                    if (lastEntry) {
+                        lastEntry.classList.add('active');
+                    }
+                }
+
+                // Update progress bar/text without duplicating log or countdown
+                updateWithNewEntry(lastEntryData, true, true);
             }
 
-            // Also update the top text with the latest message (without altering countdown)
-            updateWithNewEntry(lastEntryData, true);
+            // Auto-scroll to show latest entries
+            const logContainer = document.getElementById('logContainer');
+            logContainer.scrollTop = logContainer.scrollHeight;
         })
         .catch(error => {
             console.error('Error fetching progress:', error);

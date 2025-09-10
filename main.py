@@ -375,10 +375,8 @@ def stream_session_progress(session_id):
             progress = get_progress(session_id)
             while last_index < len(progress):
                 entry = progress[last_index]
-                # Send each new entry as SSE data
                 yield f"data: {json.dumps(entry)}\n\n"
                 last_index += 1
-                # Stop streaming once the process is completed or an error occurs
                 if entry.get("status") in ("completed", "error"):
                     return
             time.sleep(1)
