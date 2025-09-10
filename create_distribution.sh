@@ -108,22 +108,6 @@ if [ $? -eq 0 ]; then
     # --- ADD HELPER ASSETS TO STAGE ---
     # Define paths for our assets
     ASSETS_DIR="build_assets"
-    BACKUP_SCRIPT_NAME="backup method.scpt"
-    BACKUP_SCRIPT_SOURCE_PATH="$ASSETS_DIR/$BACKUP_SCRIPT_NAME"
-
-    # Check for the backup script and copy it to the stage
-    if [ ! -f "$BACKUP_SCRIPT_SOURCE_PATH" ]; then
-        echo "❌ ERROR: Backup script not found at '$BACKUP_SCRIPT_SOURCE_PATH'."
-        exit 1
-    fi
-    echo "✅ Found backup script, adding to stage."
-    cp "$BACKUP_SCRIPT_SOURCE_PATH" "$DMG_STAGING_DIR/"
-
-    # Remove quarantine attribute so the AppleScript runs without warnings
-    if command -v xattr >/dev/null 2>&1; then
-        xattr -d com.apple.quarantine "$DMG_STAGING_DIR/$BACKUP_SCRIPT_NAME" 2>/dev/null || true
-    fi
-
 
     # --- CREATE THE CUSTOM DMG ---
     DMG_NAME="GN_Ticket_Automator_v${VERSION}.dmg"
@@ -141,7 +125,6 @@ if [ $? -eq 0 ]; then
       --text-size 14 \
       --icon "GN_Ticket_Automator.app" 250 220 \
       --hide-extension "GN_Ticket_Automator.app" \
-      --icon "$BACKUP_SCRIPT_NAME" 550 350 \
       --app-drop-link 400 400 \
       "$DMG_NAME" \
       "$DMG_STAGING_DIR/"
@@ -164,7 +147,7 @@ if [ $? -eq 0 ]; then
     echo "============================================================"
     echo "📱 Version: $VERSION"
     echo "📁 App Bundle: dist/GN_Ticket_Automator.app"
-    echo "💿 Installer: $DMG_NAME (includes the backup script)"
+    echo "💿 Installer: $DMG_NAME "
     echo ""
     echo "🚀 Ready for distribution!"
 

@@ -879,7 +879,7 @@ def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api
         req_number_element = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "div.text-left.inline.ng-scope"))
         )
-        ticket_id = req_number_element.text
+        ticket_id = req_number_element[0].text
         print("req number:", ticket_id)
         # Ensure we don't overwrite existing notes, append ticket ID
         current_notes = cn_session.notes if cn_session.notes else ""
