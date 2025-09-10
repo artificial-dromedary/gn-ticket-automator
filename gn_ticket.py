@@ -175,7 +175,7 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                     'title': cn_session.title,
                     'ticket_id': ticket_result.get('ticket_id', 'Unknown')
                 })
-                set_progress(progress_session_id, f"✅ Completed {cn_session.title}", 8, 8, "running")
+                set_progress(progress_session_id, f"✅ Completed {cn_session.title}", 8, 8, "session-complete")
 
             except Exception as e:
                 error_msg = f"❌ Error processing {cn_session.title}: {str(e)}"
@@ -183,7 +183,7 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                     'title': cn_session.title,
                     'error': str(e)
                 })
-                set_progress(progress_session_id, error_msg, 8, 8)
+                set_progress(progress_session_id, error_msg, 8, 8, "error session-complete")
                 print(f"Error processing {cn_session.title}: {repr(e)}")
 
         # Create detailed completion message
