@@ -5,6 +5,7 @@ import json
 import pyotp
 import difflib
 import re
+import logging
 
 import requests
 from pytz import timezone
@@ -95,7 +96,12 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
     # Start the webdriver
-    driver = webdriver.Chrome(options=options)
+    try:
+        driver = webdriver.Chrome(options=options)
+    except Exception as e:
+        logging.error("Failed to start Chrome webdriver", exc_info=True)
+        set_progress(progress_session_id, f"❌ Failed to start Chrome browser: {e}", 1, 8, "error")
+        raise
 
     if not headless_mode:
         set_progress(progress_session_id, "🖥️  Browser window opened - you can watch the process!", 2, 8)
