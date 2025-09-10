@@ -366,8 +366,28 @@ def do_gn_ticket():
 
 @app.route("/progress/<session_id>")
 @require_auth
-def get_session_progress(session_id):
-    """Return progress updates for a given session ID."""
+def stream_session_progress(session_id):
+    """Stream progress updates for a given session ID using Server-Sent Events."""
+
+    def generate():
+        last_index = 0
+        while True:
+            progress = get_progress(session_id)
+            while last_index < len(progress):
+                entry = progress[last_index]
+                yield f"data: {json.dumps(entry)}\n\n"
+                last_index += 1
+                if entry.get("status") in ("completed", "error"):
+                    return
+            time.sleep(1)
+
+    return Response(generate(), mimetype="text/event-stream")
+
+
+@app.route("/progress-status/<session_id>")
+@require_auth
+def get_session_progress_status(session_id):
+    """Return the full progress history for manual refresh."""
     return jsonify(get_progress(session_id))
 
 
