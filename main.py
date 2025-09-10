@@ -98,9 +98,12 @@ from user_profiles import user_manager
 from airtable_integration import create_airtable_client
 from updater import AppUpdater, APP_VERSION
 from google_auth_oauthlib.flow import InstalledAppFlow
+from collections import deque
 
-# Global progress storage
+# Global progress storage. Each session keeps a deque of the most recent entries
+# (up to 50) along with a monotonically increasing sequence counter.
 progress_store = {}
+progress_counters = {}
 progress_lock = threading.Lock()
 
 
@@ -168,22 +171,28 @@ def set_progress(session_id, message, step=None, total_steps=None, status="runni
     """Update progress for a specific session"""
     with progress_lock:
         if session_id not in progress_store:
-            progress_store[session_id] = []
+            progress_store[session_id] = deque(maxlen=50)
+            progress_counters[session_id] = 0
+        progress_counters[session_id] += 1
         progress_store[session_id].append({
+            'seq': progress_counters[session_id],
             'timestamp': datetime.now().strftime('%H:%M:%S'),
-            'message': message, 'step': step, 'total_steps': total_steps, 'status': status
+            'message': message,
+            'step': step,
+            'total_steps': total_steps,
+            'status': status
         })
-        progress_store[session_id] = progress_store[session_id][-50:]
 
 
 def get_progress(session_id):
     with progress_lock:
-        return progress_store.get(session_id, [])
+        return list(progress_store.get(session_id, deque()))
 
 
 def clear_progress(session_id):
     with progress_lock:
         progress_store.pop(session_id, None)
+        progress_counters.pop(session_id, None)
 
 
 def require_auth(f):
@@ -371,15 +380,15 @@ def stream_session_progress(session_id):
     """Stream progress updates for a given session ID using Server-Sent Events."""
 
     def generate():
-        last_index = 0
+        last_seq = 0
         while True:
             progress = get_progress(session_id)
-            while last_index < len(progress):
-                entry = progress[last_index]
-                yield f"data: {json.dumps(entry)}\n\n"
-                last_index += 1
-                if entry.get("status") in ("completed", "error"):
-                    return
+            for entry in progress:
+                if entry.get('seq', 0) > last_seq:
+                    yield f"data: {json.dumps(entry)}\n\n"
+                    last_seq = entry['seq']
+                    if entry.get("status") in ("completed", "error"):
+                        return
             time.sleep(1)
 
     return Response(generate(), mimetype="text/event-stream")
@@ -388,8 +397,26 @@ def stream_session_progress(session_id):
 @app.route("/progress-status/<session_id>")
 @require_auth
 def get_session_progress_status(session_id):
-    """Return the full progress history for manual refresh."""
-    return jsonify(get_progress(session_id))
+    """Return progress updates, optionally filtered by a last sequence number."""
+    last_seq = request.args.get('lastSeq', type=int)
+    progress = get_progress(session_id)
+
+    if not progress:
+        return jsonify({'entries': [], 'reset': bool(last_seq)})
+
+    earliest = progress[0]['seq']
+    latest = progress[-1]['seq']
+
+    reset = False
+    if last_seq is not None:
+        if last_seq < earliest - 1 or last_seq > latest:
+            reset = True
+
+    if reset or last_seq is None:
+        return jsonify({'entries': progress, 'reset': reset or last_seq is None})
+
+    new_entries = [e for e in progress if e['seq'] > last_seq]
+    return jsonify({'entries': new_entries, 'reset': False})
 
 
 @app.route("/setup", methods=["GET", "POST"])
