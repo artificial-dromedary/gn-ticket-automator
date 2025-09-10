@@ -3,6 +3,9 @@ import json
 from datetime import datetime
 from dateutil import parser
 import pytz
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class AirtableSession:
@@ -23,11 +26,11 @@ class AirtableSession:
                         'Subject/Curriculum', 'Primary Subject Text',
                         'Provider Session Name', 'Session Description']
 
-        print(f"\n🔍 DEBUG TITLE FIELDS for {self.s_id}:")
+        logger.debug("DEBUG TITLE FIELDS for %s:", self.s_id)
         for field_name in title_fields:
             value = fields.get(field_name, 'NOT FOUND')
-            print(f"  {field_name}: {value}")
-        print("---")
+            logger.debug("  %s: %s", field_name, value)
+        logger.debug("---")
 
         # Session title - try multiple title field options from your field list
         title_raw = (fields.get('Session Title Text') or
@@ -102,7 +105,7 @@ class AirtableSession:
                 if self.start_time.tzinfo is None:
                     self.start_time = pytz.UTC.localize(self.start_time)
             except Exception as e:
-                print(f"⚠️  Error parsing date '{start_time_str}': {e}")
+                logger.warning("Error parsing date '%s': %s", start_time_str, e)
                 self.start_time = datetime.now(pytz.UTC)
         else:
             self.start_time = datetime.now(pytz.UTC)
@@ -121,10 +124,10 @@ class AirtableSession:
         self.school_lead_text = extract_text(fields.get('School Lead Text', ''), '')
         self.gn_ticket_requested = fields.get('GN Ticket Requested', False)
 
-        # Debug output (remove this after testing)
-        print(f"✅ Session: {self.title} | School: {self.school} | Teacher: {self.teacher}")
-        print(f"   School Lead: {self.school_lead_text} | P/T: {self.school_pt}")
-        print(f"   GN Ticket ID: {self.gn_ticket_id} | GN Requested: {self.gn_ticket_requested}")
+        # Debug output
+        logger.debug("Session: %s | School: %s | Teacher: %s", self.title, self.school, self.teacher)
+        logger.debug("   School Lead: %s | P/T: %s", self.school_lead_text, self.school_pt)
+        logger.debug("   GN Ticket ID: %s | GN Requested: %s", self.gn_ticket_id, self.gn_ticket_requested)
 
     def __str__(self):
         """String representation for debugging"""
