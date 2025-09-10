@@ -27,11 +27,12 @@ class GNTicketStatusWindow:
         
         # Set app icon if available
         try:
-            # Try to set a custom icon
             icon_path = self.get_icon_path()
             if icon_path and os.path.exists(icon_path):
-                self.window.iconbitmap(icon_path)
-        except:
+                # Tk requires a persistent reference to the PhotoImage
+                self.icon_image = tk.PhotoImage(file=icon_path)
+                self.window.iconphoto(True, self.icon_image)
+        except Exception:
             pass
         
         # Configure window close behavior
@@ -50,10 +51,10 @@ class GNTicketStatusWindow:
         """Get path to app icon"""
         if getattr(sys, 'frozen', False):
             # In bundled app
-            return os.path.join(sys._MEIPASS, 'icon.ico')
+            return os.path.join(sys._MEIPASS, 'icon.icns')
         else:
             # In development
-            return 'icon.ico'
+            return 'icon.icns'
     
     def create_widgets(self):
         """Create the UI widgets"""
