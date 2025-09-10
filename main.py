@@ -116,7 +116,7 @@ def load_config_from_env():
     is_valid = bool(config['GOOGLE_CLIENT_ID'] and config['GOOGLE_CLIENT_SECRET'])
     if not is_valid:
         logging.error("Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET environment variable.")
-        print(f"*** DEBUG: Loaded CONFIG = {CONFIG}")
+        print(f"*** DEBUG: Loaded CONFIG = {config}")
     return config, is_valid
 
 
