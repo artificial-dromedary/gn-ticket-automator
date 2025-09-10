@@ -13,21 +13,22 @@ from pathlib import Path
 import logging
 import jwt
 
-# +++ ADD THIS DIAGNOSTIC BLOCK +++
-import google_auth_oauthlib
-import inspect
-print("--- PYTHON ENVIRONMENT DIAGNOSTICS ---")
-try:
-    # Try to get version, but handle if it doesn't exist
-    version = getattr(google_auth_oauthlib, '__version__', 'Version not available')
-    print(f"google_auth_oauthlib version: {version}")
-    print(f"Module loaded from: {google_auth_oauthlib.__file__}")
-    print(f"Flow module location: {inspect.getfile(google_auth_oauthlib.flow)}")
-    print(f"Available attributes: {[attr for attr in dir(google_auth_oauthlib) if not attr.startswith('_')]}")
-except Exception as e:
-    print(f"Could not print diagnostics, error: {e}")
-print("--------------------------------------")
-# +++ END DIAGNOSTIC BLOCK +++
+# Optional environment diagnostics, enabled via ENABLE_ENV_DIAGNOSTICS
+if os.environ.get("ENABLE_ENV_DIAGNOSTICS", "").lower() in ("1", "true", "yes"):
+    import google_auth_oauthlib
+    import inspect
+
+    print("--- PYTHON ENVIRONMENT DIAGNOSTICS ---")
+    try:
+        version = getattr(google_auth_oauthlib, "__version__", "Version not available")
+        print(f"google_auth_oauthlib version: {version}")
+        print(f"Module loaded from: {google_auth_oauthlib.__file__}")
+        print(f"Flow module location: {inspect.getfile(google_auth_oauthlib.flow)}")
+        print(
+            f"Available attributes: {[attr for attr in dir(google_auth_oauthlib) if not attr.startswith('_')]}")
+    except Exception as e:
+        print(f"Could not print diagnostics, error: {e}")
+    print("--------------------------------------")
 
 
 def load_env_file():
