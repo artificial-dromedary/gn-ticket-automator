@@ -495,4 +495,5 @@ def get_enabled_sessions(request):
 gn_ticket.set_progress_callback(set_progress)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Run the Flask app without debug mode when packaged for production
+    app.run(debug=False)
