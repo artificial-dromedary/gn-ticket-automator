@@ -736,13 +736,13 @@ def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api
     time.sleep(0.5)
 
     # Select your Department
-    set_progress(progress_session_id, f"Setting department...", None, None)
+    set_progress(progress_session_id, "Setting department to Connected North...", None, None)
     if not try_dropdown_selection(driver, "s2id_sp_formfield_select_your_department",
                                   "Connected North", wait_time):
         raise Exception("Failed to set department")
 
     # Department User
-    set_progress(progress_session_id, f"Setting department user...", None, None)
+    set_progress(progress_session_id, "Setting department user to Education...", None, None)
     if not try_dropdown_selection(driver, "s2id_sp_formfield_department_user",
                                   "Education", wait_time):
         raise Exception("Failed to set department user")
@@ -754,7 +754,7 @@ def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api
         raise Exception("Failed to set community")
 
     # Office Phone
-    set_progress(progress_session_id, f"Setting phone number...", None, None)
+    set_progress(progress_session_id, f"Setting phone number to {cn_session.phone}...", None, None)
     office_phone = driver.find_element(By.ID, "sp_formfield_office_phone")
     driver.execute_script("arguments[0].scrollIntoView(true);", office_phone)  # Scroll to element before interacting
     office_phone.clear()
@@ -769,67 +769,73 @@ def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api
         raise Exception("Failed to set building")
 
     # Client Name
-    set_progress(progress_session_id, f"Setting client name...", None, None)
+    set_progress(progress_session_id,
+                 f"Setting client name to {cn_session.teacher} at {cn_session.school}...",
+                 None, None)
     client_name = driver.find_element(By.ID, "sp_formfield_client_name")
     driver.execute_script("arguments[0].scrollIntoView(true);", client_name)  # Scroll to element before interacting
     client_name.clear()
     client_name.send_keys(cn_session.teacher + " at " + cn_session.school)
 
     # Session topic
-    set_progress(progress_session_id, f"Setting session topic...", None, None)
+    set_progress(progress_session_id, f"Setting session topic to {cn_session.title}...", None, None)
     session_topic = driver.find_element(By.ID, "sp_formfield_session_topic_or_description")
     driver.execute_script("arguments[0].scrollIntoView(true);", session_topic)
     session_topic.clear()
     session_topic.send_keys(cn_session.title)
 
     # Screen layout
-    set_progress(progress_session_id, f"Setting screen layout...", None, None)
+    set_progress(progress_session_id, "Setting screen layout to Full...", None, None)
     if not try_dropdown_selection(driver, "s2id_sp_formfield_screen_layout",
                                   "Full", wait_time):
         raise Exception("Failed to set screen layout")
 
-    # Session date YYYY-MM-DD
-    set_progress(progress_session_id, f"Setting session date and time...", None, None)
+    # Session date and time
+    formatted_date = cn_session.start_time.strftime("%Y-%m-%d")
+    EST = timezone('US/Eastern')
+    start_time_EST = cn_session.start_time.astimezone(EST) - timedelta(minutes=10)
+    end_time_EST = start_time_EST + timedelta(minutes=(cn_session.length + 10))
+    start_str = start_time_EST.strftime("%-I:%M %p")
+    end_str = end_time_EST.strftime("%-I:%M %p")
+    set_progress(
+        progress_session_id,
+        f"Setting session date and time to {formatted_date} from {start_str} to {end_str} EST...",
+        None,
+        None,
+    )
     session_date = driver.find_element(By.ID, "sp_formfield_session_date")
     driver.execute_script("arguments[0].scrollIntoView(true);", session_date)
     session_date.click()
     element = driver.switch_to.active_element
-
-    formatted_date = cn_session.start_time.strftime("%Y-%m-%d")
     element.send_keys(formatted_date)
     time.sleep(wait_time)
     element.send_keys(Keys.ENTER)
 
-    # Timezone setup and formatting
-    EST = timezone('US/Eastern')
-    start_time_EST = cn_session.start_time.astimezone(EST) - timedelta(minutes=10)
-    end_time_EST = start_time_EST + timedelta(minutes=(cn_session.length + 10))
-
     # Session start time HH:MM AM
     gn_form.send_keys(Keys.TAB)
     gn_form.send_keys(Keys.TAB)
-
-    formatted_time = start_time_EST.strftime("%-I:%M %p")
     element = driver.switch_to.active_element
-    element.send_keys(formatted_time)
+    element.send_keys(start_str)
 
     # Session end time HH:MM AM
     gn_form.send_keys(Keys.TAB)
-
-    formatted_time = end_time_EST.strftime("%-I:%M %p")
     element = driver.switch_to.active_element
-    element.send_keys(formatted_time)
+    element.send_keys(end_str)
     time.sleep(wait_time)
 
     # Time zone (always set to Eastern)
-    set_progress(progress_session_id, f"Setting timezone...", None, None)
+    set_progress(progress_session_id, "Setting timezone to Eastern...", None, None)
     if not try_dropdown_selection(driver, "s2id_sp_formfield_time_zone",
                                   "Eastern", wait_time):
         raise Exception("Failed to set timezone")
 
     # Site - Use smart selection with ChatGPT fallback, and potentially manual intervention
-    set_progress(progress_session_id,
-                 f"Setting site information with smart matching (and manual fallback if enabled)...", None, None)
+    set_progress(
+        progress_session_id,
+        f"Setting site information for {cn_session.title} with smart matching (and manual fallback if enabled)...",
+        None,
+        None,
+    )
     success = smart_site_selection(driver, cn_session, wait_time, progress_session_id, chatgpt_api_key,
                                    allow_manual_site_selection, headless_mode)
     if not success:
@@ -837,7 +843,7 @@ def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api
             f"Failed to set site for {cn_session.title} - all selection methods failed (including manual if enabled).")
 
     # Connection Details
-    set_progress(progress_session_id, f"Setting connection details...", None, None)
+    set_progress(progress_session_id, f"Setting connection details for {cn_session.title}...", None, None)
     conn_details = driver.find_element(By.ID, "sp_formfield_connection_details")
     driver.execute_script("arguments[0].scrollIntoView(true);", conn_details)  # Scroll to element before interacting
     conn_details.click()

@@ -209,7 +209,7 @@ const sessionCount = {{ session_count }};
 let remainingSessions = sessionCount;
 let eventSource = null;
 let isComplete = false;
-let lastProcessedEntryIndex = 0; // Track what we've already processed
+let lastSeq = 0; // Track last processed sequence
 
 function startProgressStream() {
     if (eventSource) {
@@ -243,6 +243,10 @@ function updateWithNewEntry(entry, skipCountdown = false, skipLog = false) {
     const spinner = document.getElementById('spinner');
     const statusMessage = document.getElementById('statusMessage');
     const remainingSpan = document.getElementById('remainingSessions');
+
+    if (entry.seq !== undefined && entry.seq <= lastSeq) {
+        return; // Already processed
+    }
 
     if (!skipLog) {
         // Remove active class from previous entry
@@ -305,61 +309,31 @@ function updateWithNewEntry(entry, skipCountdown = false, skipLog = false) {
 
         eventSource.close();
     }
+
+    if (entry.seq !== undefined) {
+        lastSeq = entry.seq;
+    }
 }
 
 function refreshProgress() {
-    fetch(`/progress-status/${progressSessionId}`)
+    fetch(`/progress-status/${progressSessionId}?lastSeq=${lastSeq}`)
         .then(response => response.json())
         .then(data => {
-            if (!data || data.length === 0) return;
+            if (!data || !data.entries) return;
 
-            // Only append new entries that we haven't processed yet
-            const newEntries = data.slice(lastProcessedEntryIndex);
-            
-            newEntries.forEach(entry => {
-                // Remove active class from previous entry
-                const logContainer = document.getElementById('logContainer');
-                const previousActive = logContainer.querySelector('.log-entry.active');
-                if (previousActive) {
-                    previousActive.classList.remove('active');
-                }
+            const logContainer = document.getElementById('logContainer');
 
-                // Create and append new entry
-                const logEntry = document.createElement('div');
-                logEntry.className = `log-entry ${entry.status}`;
-                logEntry.innerHTML = `<span class="timestamp">${entry.timestamp}</span> ${entry.message}`;
-                
-                logContainer.appendChild(logEntry);
-            });
-
-            // Update our tracking index
-            lastProcessedEntryIndex = data.length;
-
-            // Recalculate remaining sessions
-            const completedCount = data.filter(e => e.status && e.status.includes('session-complete')).length;
-            remainingSessions = Math.max(sessionCount - completedCount, 0);
-            document.getElementById('remainingSessions').textContent = remainingSessions;
-
-            // Mark the last entry as active if the process is not complete
-            if (data.length > 0) {
-                const lastEntryData = data[data.length - 1];
-                const lastIsTerminalError = lastEntryData.status && lastEntryData.status.includes('error') && !lastEntryData.status.includes('session-complete');
-                const lastIsCompleted = lastEntryData.status && lastEntryData.status.includes('completed');
-                
-                if (!(lastIsCompleted || lastIsTerminalError)) {
-                    const logContainer = document.getElementById('logContainer');
-                    const lastEntry = logContainer.lastElementChild;
-                    if (lastEntry) {
-                        lastEntry.classList.add('active');
-                    }
-                }
-
-                // Update progress bar/text without duplicating log or countdown
-                updateWithNewEntry(lastEntryData, true, true);
+            if (data.reset) {
+                logContainer.innerHTML = '';
+                remainingSessions = sessionCount;
+                document.getElementById('remainingSessions').textContent = remainingSessions;
+                lastSeq = 0;
             }
 
-            // Auto-scroll to show latest entries
-            const logContainer = document.getElementById('logContainer');
+            data.entries.forEach(entry => {
+                updateWithNewEntry(entry);
+            });
+
             logContainer.scrollTop = logContainer.scrollHeight;
         })
         .catch(error => {
