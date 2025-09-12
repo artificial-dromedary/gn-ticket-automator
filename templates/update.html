@@ -239,7 +239,7 @@ function startUpdate() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            // Redirect to progress page
+            // After successfully starting the update, go to the progress page
             window.location.href = '/update/install-page';
         } else {
             alert('Update failed: ' + (data.error || 'Unknown error'));
