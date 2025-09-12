@@ -109,6 +109,15 @@ progress_store = {}
 progress_counters = {}
 progress_lock = threading.Lock()
 
+# Simple global progress tracking for the updater
+update_progress = {
+    'progress': 0,
+    'message': 'Not started',
+    'complete': False,
+    'error': None
+}
+update_progress_lock = threading.Lock()
+
 
 def load_config_from_env():
     config = {
@@ -471,19 +480,50 @@ def install_update():
         if not update_info.get('available'):
             return jsonify({"success": False, "error": "No update available"})
 
+        with update_progress_lock:
+            update_progress.update({
+                'progress': 0,
+                'message': 'Starting update...',
+                'complete': False,
+                'error': None
+            })
+
         def run_update():
             try:
                 AppUpdater().prepare_and_launch_installer(update_info['download_url'])
+                with update_progress_lock:
+                    update_progress.update({
+                        'progress': 100,
+                        'message': 'Update launched',
+                        'complete': True
+                    })
             except Exception as e:
                 logging.error(f"Update preparation failed: {e}", exc_info=True)
+                with update_progress_lock:
+                    update_progress.update({
+                        'error': str(e),
+                        'message': f'Update failed: {e}',
+                        'complete': True
+                    })
 
         threading.Thread(target=run_update, daemon=True).start()
 
-        return """<html><body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-                    <h1>Update in Progress</h1><p>A native progress window has opened.</p>
-                    <p>You can close this browser window.</p></body></html>"""
+        return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/update/install-page")
+@require_auth
+def update_install_page():
+    return render_template("update_progress.html")
+
+
+@app.route("/update/progress")
+@require_auth
+def get_update_progress():
+    with update_progress_lock:
+        return jsonify(update_progress)
 
 
 @app.route("/update/dismiss", methods=["POST"])
