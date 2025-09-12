@@ -12,6 +12,9 @@ import sys
 from pathlib import Path
 import logging
 import jwt
+import uuid
+
+RUN_ID = uuid.uuid4().hex
 
 # Optional environment diagnostics, enabled via ENABLE_ENV_DIAGNOSTICS
 if os.environ.get("ENABLE_ENV_DIAGNOSTICS", "").lower() in ("1", "true", "yes"):
@@ -307,8 +310,8 @@ def gn_ticket_page():
         return render_template("setup_profile.html", user=user, profile={}, error=migration_error)
     # --- END CHECK ---
 
-    if 'update_checked' not in session:
-        session['update_checked'] = True
+    if session.get('update_checked') != RUN_ID:
+        session['update_checked'] = RUN_ID
         try:
             logging.info("Checking for updates on startup...")
             update_info = AppUpdater().check_for_updates()
