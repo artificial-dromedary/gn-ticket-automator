@@ -883,13 +883,13 @@ def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api
     ticket_id = ""  # Initialize ticket_id here to ensure it's always defined
     try:
         req_number_element = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div.text-left.inline.ng-scope"))
+            EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'text-muted') and contains(.,'Request Number')]//b"))
         )
-        ticket_id = req_number_element.text
+        ticket_id = req_number_element.text.strip()
         print("req number:", ticket_id)
-        # Ensure we don't overwrite existing notes, append ticket ID
-        current_notes = cn_session.notes if cn_session.notes else ""
-        set_airtable_field(cn_session, "GN Ticket ID", f"{current_notes} #gn-submitted {ticket_id}".strip(), api_key)
+        # Append the ticket ID to existing GN Ticket ID field
+        current_gn_ticket_id = cn_session.gn_ticket_id if cn_session.gn_ticket_id else ""
+        set_airtable_field(cn_session, "GN Ticket ID", f"{current_gn_ticket_id} #gn-submitted {ticket_id}".strip(), api_key)
         set_progress(progress_session_id, f"✅ Ticket {ticket_id} created for {cn_session.title}", None, None)
     except Exception as e:
         print(f"Could not retrieve ticket ID: {e}")
