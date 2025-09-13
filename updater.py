@@ -16,7 +16,7 @@ import tkinter as tk
 from tkinter import ttk
 
 # CONFIGURATION - Update these values for your releases:
-APP_VERSION = "1.2.0"  # Update this with each release
+APP_VERSION = "1.2.1"  # Update this with each release
 GITHUB_REPO = "artificial-dromedary/gn-ticket-automator"  # Your GitHub repo
 UPDATE_CHECK_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 

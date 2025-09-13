@@ -215,13 +215,9 @@ class AirtableIntegration:
                 response.raise_for_status()
 
                 data = response.json()
-
                 # Debug: Print field names from first record (only for first page)
                 if not offset and data.get('records') and len(data['records']) > 0:
                     first_record = data['records'][0]
-                    print("📋 Available fields in Airtable:")
-                    for field_name in first_record.get('fields', {}).keys():
-                        print(f"  - {field_name}")
                     status_value = first_record.get('fields', {}).get('Status', 'NOT FOUND')
                     school_pt = first_record.get('fields', {}).get('School P/T', 'NOT FOUND')
                     gn_ticket = first_record.get('fields', {}).get('GN Ticket ID', 'NOT FOUND')
