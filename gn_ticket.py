@@ -173,7 +173,7 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                                  "running")
 
                 # Submit GN ticket
-                set_progress(progress_session_id, f"Submitting GN ticket for {cn_session.title}...", 8, 8, "running")
+                set_progress(progress_session_id, f"Starting GN ticket for {cn_session.title}...", 8, 8, "running")
                 ticket_result = do_gn_ticket(
                     driver,
                     cn_session,
