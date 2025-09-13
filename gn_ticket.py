@@ -44,7 +44,8 @@ def generate_totp_token(secret):
 
 
 def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_session_id=None, airtable_api_key=None,
-                      totp_secret=None, headless_mode=True, chatgpt_api_key=None, allow_manual_site_selection=False):
+                      totp_secret=None, headless_mode=True, chatgpt_api_key=None, allow_manual_site_selection=False,
+                      buffer_before=10, buffer_after=10):
     """
     Process GN ticket submissions for booked sessions.
 
@@ -59,6 +60,8 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
         headless_mode: Boolean - True for headless, False to show browser
         chatgpt_api_key: OpenAI API key for smart site matching
         allow_manual_site_selection: Boolean - True to allow user to manually select site if automated fails
+        buffer_before: Minutes to start session early
+        buffer_after: Minutes to extend session after
     """
     # Validate required parameters
     if not airtable_api_key:
@@ -793,8 +796,8 @@ def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api
     # Session date and time
     formatted_date = cn_session.start_time.strftime("%Y-%m-%d")
     EST = timezone('US/Eastern')
-    start_time_EST = cn_session.start_time.astimezone(EST) - timedelta(minutes=10)
-    end_time_EST = start_time_EST + timedelta(minutes=(cn_session.length + 10))
+    start_time_EST = cn_session.start_time.astimezone(EST) - timedelta(minutes=buffer_before)
+    end_time_EST = cn_session.start_time.astimezone(EST) + timedelta(minutes=cn_session.length + buffer_after)
     start_str = start_time_EST.strftime("%-I:%M %p")
     end_str = end_time_EST.strftime("%-I:%M %p")
     set_progress(

@@ -124,6 +124,17 @@ function removeSession(button) {
       </label>
     </div>
 
+    <div style="margin: 15px 0; padding: 10px; background: #f0f8ff; border-radius: 5px;">
+      <label style="margin-right: 10px;">
+        Minutes before:
+        <input type="number" name="buffer_before" id="buffer_before" value="{{ buffer_before }}" style="width: 60px;">
+      </label>
+      <label>
+        Minutes after:
+        <input type="number" name="buffer_after" id="buffer_after" value="{{ buffer_after }}" style="width: 60px;">
+      </label>
+    </div>
+
     <p>
       <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
     </p>
