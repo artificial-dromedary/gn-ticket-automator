@@ -339,7 +339,7 @@ def gn_ticket_page():
                                current_version=session.get('current_version'), user=user, auto_detected=True)
 
     try:
-        sessions_data = create_airtable_client(profile['airtable_api_key']).get_booked_sessions(user_name=user['name'])
+        sessions_data = create_airtable_client(profile['airtable_api_key']).get_booked_sessions(user_email=user['email'])
         session['book_sessions'] = sessions_data
 
         prefs = profile.get('preferences', {})

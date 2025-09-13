@@ -144,13 +144,13 @@ class AirtableIntegration:
             "Content-Type": "application/json"
         }
 
-    def get_sessions(self, status_filters=None, user_name=None):
+    def get_sessions(self, status_filters=None, user_email=None):
         """
         Get sessions from Airtable with optional filtering
 
         Args:
             status_filters: List of status values to filter by (e.g., ["Booked", "Confirmed for Booking"])
-            user_name: Filter by user name (for School Lead field)
+            user_email: Filter by user email (for School Lead Email field)
 
         Returns:
             List of AirtableSession objects
@@ -170,9 +170,9 @@ class AirtableIntegration:
                 else:
                     filter_parts.append(f"OR({', '.join(status_conditions)})")
 
-            if user_name:
-                # UPDATED: Use School Lead Text instead of School Lead (which might be a linked record)
-                filter_parts.append(f"{{School Lead Text}} = '{user_name}'")
+            if user_email:
+                # Use School Lead Email for matching instead of name
+                filter_parts.append(f"{{School Lead Email}} = '{user_email}'")
 
                 # ADDED: Filter for Nunavut sessions only
                 filter_parts.append("FIND('NU', {School P/T}) > 0")
@@ -221,12 +221,12 @@ class AirtableIntegration:
                     status_value = first_record.get('fields', {}).get('Status', 'NOT FOUND')
                     school_pt = first_record.get('fields', {}).get('School P/T', 'NOT FOUND')
                     gn_ticket = first_record.get('fields', {}).get('GN Ticket ID', 'NOT FOUND')
-                    school_lead = first_record.get('fields', {}).get('School Lead Text', 'NOT FOUND')
+                    school_lead_email = first_record.get('fields', {}).get('School Lead Email', 'NOT FOUND')
                     gn_ticket_requested = first_record.get('fields', {}).get('GN Ticket Requested', 'NOT FOUND')
                     print(f"📋 Status field value: {status_value}")
                     print(f"📋 School P/T field value: {school_pt}")
                     print(f"📋 GN Ticket ID field value: {gn_ticket}")
-                    print(f"📋 School Lead Text field value: {school_lead}")
+                    print(f"📋 School Lead Email field value: {school_lead_email}")
                     print(f"📋 GN Ticket Requested field value: {gn_ticket_requested}")
 
                 # Convert records to session objects
@@ -249,14 +249,14 @@ class AirtableIntegration:
                     print(f"Response content: {e.response.text}")
                 raise Exception(f"Failed to fetch sessions from Airtable: {e}")
 
-        user_filter_msg = f" for user '{user_name}'" if user_name else ""
+        user_filter_msg = f" for user '{user_email}'" if user_email else ""
         print(f"✅ Found {len(sessions)} Nunavut sessions{user_filter_msg} that haven't been processed yet")
         return sessions
 
-    def get_booked_sessions(self, user_name=None):
+    def get_booked_sessions(self, user_email=None):
         """Get sessions with 'Booked' status"""
         # FIXED: Use the correct status value
-        return self.get_sessions(status_filters=["Booked"], user_name=user_name)
+        return self.get_sessions(status_filters=["Booked"], user_email=user_email)
 
     def update_session_field(self, session_id, field_name, value):
         """Update a specific field in a session record"""
