@@ -213,29 +213,6 @@
         let updateComplete = false;
         let hasError = false;
 
-        // Start the update process
-        function startUpdate() {
-            fetch('/update/install', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    console.log('Update started successfully');
-                    pollProgress();
-                } else {
-                    showError('Failed to start update: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                console.error('Error starting update:', error);
-                showError('Failed to start update: ' + error.message);
-            });
-        }
-
         // Poll for progress updates
         function pollProgress() {
             if (updateComplete) return;
@@ -337,10 +314,10 @@
             window.location.href = '/gn_ticket';
         }
 
-        // Start the update process when page loads
+        // Begin polling when the page loads
         window.addEventListener('load', function() {
             // Small delay to show the UI before starting
-            setTimeout(startUpdate, 1000);
+            setTimeout(pollProgress, 1000);
         });
     </script>
 </body>
