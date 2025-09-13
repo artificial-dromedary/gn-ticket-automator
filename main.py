@@ -341,7 +341,18 @@ def gn_ticket_page():
     try:
         sessions_data = create_airtable_client(profile['airtable_api_key']).get_booked_sessions(user_name=user['name'])
         session['book_sessions'] = sessions_data
-        return render_template("gn.html", all_sessions=sessions_data, user=user)
+
+        prefs = profile.get('preferences', {})
+        buffer_before = prefs.get('buffer_before', 10)
+        buffer_after = prefs.get('buffer_after', 10)
+
+        return render_template(
+            "gn.html",
+            all_sessions=sessions_data,
+            user=user,
+            buffer_before=buffer_before,
+            buffer_after=buffer_after,
+        )
     except Exception as e:
         logging.error(f"Error loading sessions: {e}", exc_info=True)
         return render_template("profile_error.html", error=str(e), user=user)
@@ -361,6 +372,19 @@ def do_gn_ticket():
 
     # Extract necessary data from the request *before* spawning the thread
     headless_mode_enabled = (request.form.get('watch_browser') != 'yes')
+    buffer_before = int(request.form.get('buffer_before', 10) or 0)
+    buffer_after = int(request.form.get('buffer_after', 10) or 0)
+
+    prefs = profile.get('preferences', {})
+    prefs['buffer_before'] = buffer_before
+    prefs['buffer_after'] = buffer_after
+
+    user_manager.save_profile(user['email'], {
+        'airtable_api_key': profile.get('airtable_api_key'),
+        'servicenow_password': profile.get('servicenow_password'),
+        'totp_secret': profile.get('totp_secret'),
+        'preferences': prefs
+    })
 
     def run_booking():
         try:
@@ -374,7 +398,9 @@ def do_gn_ticket():
                 profile.get('totp_secret'),
                 headless_mode=headless_mode_enabled,  # This will control browser visibility
                 allow_manual_site_selection=True,  # Explicitly enable manual intervention
-                chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY')
+                chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY'),
+                buffer_before=buffer_before,
+                buffer_after=buffer_after
             )
         except Exception as e:
             set_progress(progress_session_id, f"Critical error during booking: {str(e)}", status="error")
