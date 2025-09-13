@@ -174,8 +174,19 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
 
                 # Submit GN ticket
                 set_progress(progress_session_id, f"Submitting GN ticket for {cn_session.title}...", 8, 8, "running")
-                ticket_result = do_gn_ticket(driver, cn_session, username, pw, progress_session_id, airtable_api_key,
-                                             chatgpt_api_key, allow_manual_site_selection, headless_mode)
+                ticket_result = do_gn_ticket(
+                    driver,
+                    cn_session,
+                    username,
+                    pw,
+                    buffer_before,
+                    buffer_after,
+                    progress_session_id,
+                    airtable_api_key,
+                    chatgpt_api_key,
+                    allow_manual_site_selection,
+                    headless_mode,
+                )
 
                 # Mark as successfully requested in Airtable
                 set_airtable_field(cn_session, "GN Ticket Requested", True, airtable_api_key)
@@ -716,8 +727,10 @@ def set_airtable_field(item, field, content, api_key):
                               data=json_data)
 
 
-def do_gn_ticket(driver, cn_session, username, pw, progress_session_id=None, api_key=None, chatgpt_api_key=None,
+def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_after=10,
+                 progress_session_id=None, api_key=None, chatgpt_api_key=None,
                  allow_manual_site_selection=False, headless_mode=True):
+    """Fill and submit the GN ticket form for a single session."""
     wait_time = 1.5
 
     set_progress(progress_session_id, f"Loading GN ticket form for {cn_session.title}...", None, None)
