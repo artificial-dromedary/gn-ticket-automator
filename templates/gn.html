@@ -85,6 +85,36 @@ function removeSession(button) {
   // Hide the session with a fade effect
   sessionDiv.fadeOut(300);
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+  const timeElements = document.querySelectorAll('.session-time[data-time]');
+
+  timeElements.forEach(function(element) {
+    const isoTime = element.getAttribute('data-time');
+
+    if (!isoTime) {
+      return;
+    }
+
+    const parsedDate = new Date(isoTime);
+
+    if (isNaN(parsedDate.getTime())) {
+      return;
+    }
+
+    const formatted = new Intl.DateTimeFormat([], {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    }).format(parsedDate);
+
+    element.textContent = formatted;
+  });
+});
 </script>
 </head>
 <body>
@@ -164,7 +194,10 @@ function removeSession(button) {
           <p class="tag">
             <strong>School:</strong> {{ session.school }}<br>
             <strong>Teacher:</strong> {{ session.teacher }}<br>
-            <strong>Date/Time:</strong> {{ session.start_time.strftime('%Y-%m-%d %I:%M %p %Z') if session.start_time else 'Not set' }}
+            <strong>Date/Time:</strong>
+            <span class="session-time" data-time="{{ session.start_time.isoformat() if session.start_time else '' }}">
+              {{ session.start_time.strftime('%Y-%m-%d %I:%M %p %Z') if session.start_time else 'Not set' }}
+            </span>
           </p>
 
           <!-- Details Section -->
