@@ -124,6 +124,10 @@ class AirtableSession:
         self.school_lead_text = extract_text(fields.get('School Lead Text', ''), '')
         self.gn_ticket_requested = fields.get('GN Ticket Requested', False)
 
+        # Conflict detection fields
+        self.is_conflict = False
+        self.conflict_details = ""
+
         # Debug output
         logger.debug("Session: %s | School: %s | Teacher: %s", self.title, self.school, self.teacher)
         logger.debug("   School Lead: %s | P/T: %s", self.school_lead_text, self.school_pt)
@@ -257,6 +261,70 @@ class AirtableIntegration:
         """Get sessions with 'Booked' status"""
         # FIXED: Use the correct status value
         return self.get_sessions(status_filters=["Booked"], user_email=user_email)
+
+    def get_all_sessions_for_schools(self, school_names, status_filters=None):
+        """
+        Get all sessions from Airtable for a specific list of schools and statuses.
+
+        Args:
+            school_names: List of school names to filter by.
+            status_filters: List of status values to filter by (e.g., ["Booked"])
+
+        Returns:
+            List of AirtableSession objects
+        """
+        if not school_names:
+            return []
+
+        sessions = []
+        offset = None
+
+        while True:
+            # Build filter formula
+            filter_parts = []
+
+            # School filter
+            school_conditions = [f"{{School Name Text}} = '{name}'" for name in school_names]
+            if len(school_conditions) == 1:
+                filter_parts.append(school_conditions[0])
+            else:
+                filter_parts.append(f"OR({', '.join(school_conditions)})")
+
+            # Status filter
+            if status_filters:
+                status_conditions = [f"{{Status}} = '{status}'" for status in status_filters]
+                if len(status_conditions) == 1:
+                    filter_parts.append(status_conditions[0])
+                else:
+                    filter_parts.append(f"OR({', '.join(status_conditions)})")
+
+            # Combine filters
+            filter_formula = f"AND({', '.join(filter_parts)})"
+
+            params = {'pageSize': 100, 'filterByFormula': filter_formula}
+            if offset:
+                params['offset'] = offset
+
+            try:
+                response = requests.get(self.base_url, headers=self.headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+                for record in data.get('records', []):
+                    try:
+                        session = AirtableSession(record)
+                        sessions.append(session)
+                    except Exception as e:
+                        print(f"Error parsing session record {record.get('id', 'unknown')}: {e}")
+                        continue
+                offset = data.get('offset')
+                if not offset:
+                    break
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching Airtable school session data: {e}")
+                raise Exception(f"Failed to fetch sessions from Airtable: {e}")
+
+        print(f"✅ Found {len(sessions)} existing sessions for conflict checking across {len(school_names)} schools.")
+        return sessions
 
     def update_session_field(self, session_id, field_name, value):
         """Update a specific field in a session record"""

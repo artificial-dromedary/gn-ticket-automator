@@ -3,8 +3,8 @@ from flask import render_template
 from flask import request
 import json
 import time
-import threading
-from datetime import datetime
+import threading 
+from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
 import secrets
@@ -218,6 +218,42 @@ def require_auth(f):
     decorated_function.__name__ = f.__name__
     return decorated_function
 
+def check_for_time_conflicts(candidate_sessions, existing_sessions):
+    """
+    Checks for time overlaps between candidate sessions and existing sessions at the same school.
+    Updates the is_conflict flag on candidate sessions if an overlap is found.
+    """
+    for candidate in candidate_sessions:
+        # Skip if start time isn't set
+        if not candidate.start_time:
+            continue
+
+        candidate_start = candidate.start_time
+        candidate_end = candidate_start + timedelta(minutes=candidate.length)
+
+        for existing in existing_sessions:
+            # Don't compare a session to itself, and only check sessions at the same school
+            if candidate.s_id == existing.s_id or candidate.school != existing.school:
+                continue
+
+            # Skip if start time isn't set
+            if not existing.start_time:
+                continue
+
+            existing_start = existing.start_time
+            existing_end = existing_start + timedelta(minutes=existing.length)
+
+            # Check for overlap: (StartA < EndB) and (StartB < EndA)
+            if candidate_start < existing_end and existing_start < candidate_end:
+                candidate.is_conflict = True
+                conflict_time = existing.start_time.strftime('%b %d @ %I:%M %p')
+                candidate.conflict_details = (
+                    f"Conflicts with '{existing.title}' on {conflict_time}."
+                )
+                # Once a conflict is found for the candidate, no need to check further
+                break
+
+    return candidate_sessions
 
 # --- Routes ---
 @app.route("/")
@@ -339,8 +375,24 @@ def gn_ticket_page():
                                current_version=session.get('current_version'), user=user, auto_detected=True)
 
     try:
-        sessions_data = create_airtable_client(profile['airtable_api_key']).get_booked_sessions(user_email=user['email'])
-        session['book_sessions'] = sessions_data
+        airtable_client = create_airtable_client(profile['airtable_api_key'])
+        candidate_sessions = airtable_client.get_booked_sessions(user_email=user['email'])
+
+        # --- CONFLICT DETECTION LOGIC ---
+        if candidate_sessions:
+            # 1. Get unique school names from the sessions to be booked
+            school_names = list(set(s.school for s in candidate_sessions if s.school != 'Unknown School'))
+
+            if school_names:
+                # 2. Fetch all existing "Booked" sessions for those schools
+                existing_sessions = airtable_client.get_all_sessions_for_schools(
+                    school_names, status_filters=["Booked"]
+                )
+
+                # 3. Check for conflicts and update the candidate sessions list
+                candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions)
+
+        session['book_sessions'] = candidate_sessions
 
         prefs = profile.get('preferences', {})
         buffer_before = prefs.get('buffer_before', 10)
@@ -348,7 +400,7 @@ def gn_ticket_page():
 
         return render_template(
             "gn.html",
-            all_sessions=sessions_data,
+            all_sessions=candidate_sessions,
             user=user,
             buffer_before=buffer_before,
             buffer_after=buffer_after,
