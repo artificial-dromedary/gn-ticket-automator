@@ -127,6 +127,7 @@ class AirtableSession:
         # Conflict detection fields
         self.is_conflict = False
         self.conflict_details = ""
+        self.conflict_type = None
 
         # Debug output
         logger.debug("Session: %s | School: %s | Teacher: %s", self.title, self.school, self.teacher)

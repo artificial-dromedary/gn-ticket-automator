@@ -220,54 +220,92 @@ def require_auth(f):
 
 def check_for_time_conflicts(candidate_sessions, existing_sessions):
     """
-    Checks for time overlaps between candidate sessions (new GN ticket requests)
-    and previously booked sessions at the same school. Updates the
-    ``is_conflict`` flag on candidate sessions if an overlap is found.
+    Checks for conflicts between candidate sessions (new GN ticket requests)
+    and previously existing Airtable sessions for the same school.
 
-    Only "Booked" sessions that already exist in Airtable are considered
-    conflicts. Sessions that are part of the current GN ticket batch are
-    treated as second priority and do not conflict with one another.
+    Two scenarios are considered:
+    1. Time conflicts against already booked sessions.
+    2. Existing GN tickets that were requested for non-booked sessions,
+       which need to be modified or cancelled before creating a new ticket.
     """
 
     # Existing Airtable sessions take priority over the candidate sessions
     candidate_ids = {session.s_id for session in candidate_sessions}
 
     for candidate in candidate_sessions:
-        # Skip if start time isn't set
-        if not candidate.start_time:
-            continue
+        # Reset conflict flags for safety if function called multiple times
+        candidate.is_conflict = False
+        candidate.conflict_details = ""
+        candidate.conflict_type = None
 
         candidate_start = candidate.start_time
-        candidate_end = candidate_start + timedelta(minutes=candidate.length or 0)
+        candidate_end = (candidate_start + timedelta(minutes=candidate.length or 0)
+                         if candidate_start else None)
 
+        # --- Priority 1: Previously booked sessions with overlapping times ---
+        if candidate_start:
+            for existing in existing_sessions:
+                if existing.s_id in candidate_ids:
+                    continue
+
+                if candidate.school != existing.school:
+                    continue
+
+                if (existing.status or "").strip().lower() != "booked":
+                    continue
+
+                if not existing.start_time:
+                    continue
+
+                existing_start = existing.start_time
+                existing_end = existing_start + timedelta(minutes=existing.length or 0)
+
+                if candidate_start < existing_end and existing_start < candidate_end:
+                    candidate.is_conflict = True
+                    candidate.conflict_type = "time"
+
+                    start_display = existing_start.strftime('%b %d @ %I:%M %p')
+                    end_display = existing_end.strftime('%I:%M %p')
+                    candidate.conflict_details = (
+                        f"Conflicts with previously booked session '{existing.title}' "
+                        f"({start_display} – {end_display})."
+                    )
+                    break
+
+        if candidate.is_conflict:
+            continue
+
+        # --- Priority 2: Existing GN ticket requests on non-booked sessions ---
         for existing in existing_sessions:
-            # Ignore sessions that are part of the candidate list (second priority)
             if existing.s_id in candidate_ids:
                 continue
 
-            # Only check sessions at the same school that have a start time
-            if candidate.school != existing.school or not existing.start_time:
+            if candidate.school != existing.school:
                 continue
 
-            if (existing.status or "").lower() != "booked":
+            if not getattr(existing, 'gn_ticket_requested', False):
                 continue
 
-            existing_start = existing.start_time
-            existing_end = existing_start + timedelta(minutes=existing.length or 0)
+            if (existing.status or "").strip().lower() == "booked":
+                continue
 
-            # Check for overlap: (StartA < EndB) and (StartB < EndA)
-            if candidate_start < existing_end and existing_start < candidate_end:
-                candidate.is_conflict = True
+            candidate.is_conflict = True
+            candidate.conflict_type = "gn_ticket"
 
-                start_display = existing_start.strftime('%b %d @ %I:%M %p')
-                end_display = existing_end.strftime('%I:%M %p')
+            status_display = existing.status or "Unknown status"
+            if existing.start_time:
+                ticket_time = existing.start_time.strftime('%b %d @ %I:%M %p %Z')
                 candidate.conflict_details = (
-                    f"Conflicts with previously booked session '{existing.title}' "
-                    f"({start_display} – {end_display})."
+                    f"School is available, but a GN ticket was already requested for "
+                    f"'{existing.title}' ({status_display}, {ticket_time}). "
+                    f"Modify or cancel that ticket before booking."
                 )
-
-                # Once a conflict is found for the candidate, no need to check further
-                break
+            else:
+                candidate.conflict_details = (
+                    f"School is available, but a GN ticket was already requested for "
+                    f"'{existing.title}' ({status_display}). Modify or cancel that ticket before booking."
+                )
+            break
 
     return candidate_sessions
 
@@ -400,9 +438,10 @@ def gn_ticket_page():
             school_names = list(set(s.school for s in candidate_sessions if s.school != 'Unknown School'))
 
             if school_names:
-                # 2. Fetch all existing "Booked" sessions for those schools
+                # 2. Fetch all existing sessions for those schools so we can check both
+                #    time conflicts (booked) and GN ticket warnings (non-booked with tickets)
                 existing_sessions = airtable_client.get_all_sessions_for_schools(
-                    school_names, status_filters=["Booked"]
+                    school_names
                 )
 
                 # 3. Check for conflicts and update the candidate sessions list
