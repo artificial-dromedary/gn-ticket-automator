@@ -27,6 +27,28 @@ body {
   border-radius: 5px;
   background: #f9f9f9;
 }
+.session.session-conflict {
+  border-color: #d9534f;
+  box-shadow: 0 0 0 2px rgba(217, 83, 79, 0.15);
+}
+.session.session-gn-warning {
+  border-color: #f0ad4e;
+  box-shadow: 0 0 0 2px rgba(240, 173, 78, 0.15);
+}
+.conflict-banner {
+  background: #fcebea;
+  border: 1px solid #d9534f;
+  border-radius: 4px;
+  color: #a94442;
+  font-weight: bold;
+  margin-bottom: 12px;
+  padding: 10px;
+}
+.conflict-banner.conflict-gn-ticket {
+  background: #fff3cd;
+  border-color: #f0ad4e;
+  color: #8a6d3b;
+}
 .session h4 {
   color: #333;
   margin-top: 0;
@@ -177,7 +199,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <div class="gallery">
       {% if all_sessions %}
         {% for session in all_sessions %}
-        <div class="session">
+        <div class="session{% if session.conflict_type == 'time' %} session-conflict{% elif session.conflict_type == 'gn_ticket' %} session-gn-warning{% endif %}">
           <!-- Remove button with hidden form fields -->
           <div style="text-align: left; margin-bottom: 10px;">
             <button type="button" onclick="removeSession(this)" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
@@ -186,6 +208,16 @@ document.addEventListener('DOMContentLoaded', function() {
             <input name="book_me" type="hidden" id="{{session.s_id}}" value="y">
             <input name="airtable_id" type="hidden" id="{{session.s_id}}_airtable" value="{{session.s_id}}">
           </div>
+
+          {% if session.conflict_type == 'time' %}
+          <div class="conflict-banner conflict-time">
+            ⚠️ Time conflict: {{ session.conflict_details }}
+          </div>
+          {% elif session.conflict_type == 'gn_ticket' %}
+          <div class="conflict-banner conflict-gn-ticket">
+            ⚠️ GN ticket follow-up needed: {{ session.conflict_details }}
+          </div>
+          {% endif %}
 
           <!-- Session Title -->
           <h4>{{ session.title }}</h4>
