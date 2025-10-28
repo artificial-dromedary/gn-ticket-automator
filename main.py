@@ -220,36 +220,52 @@ def require_auth(f):
 
 def check_for_time_conflicts(candidate_sessions, existing_sessions):
     """
-    Checks for time overlaps between candidate sessions and existing sessions at the same school.
-    Updates the is_conflict flag on candidate sessions if an overlap is found.
+    Checks for time overlaps between candidate sessions (new GN ticket requests)
+    and previously booked sessions at the same school. Updates the
+    ``is_conflict`` flag on candidate sessions if an overlap is found.
+
+    Only "Booked" sessions that already exist in Airtable are considered
+    conflicts. Sessions that are part of the current GN ticket batch are
+    treated as second priority and do not conflict with one another.
     """
+
+    # Existing Airtable sessions take priority over the candidate sessions
+    candidate_ids = {session.s_id for session in candidate_sessions}
+
     for candidate in candidate_sessions:
         # Skip if start time isn't set
         if not candidate.start_time:
             continue
 
         candidate_start = candidate.start_time
-        candidate_end = candidate_start + timedelta(minutes=candidate.length)
+        candidate_end = candidate_start + timedelta(minutes=candidate.length or 0)
 
         for existing in existing_sessions:
-            # Don't compare a session to itself, and only check sessions at the same school
-            if candidate.s_id == existing.s_id or candidate.school != existing.school:
+            # Ignore sessions that are part of the candidate list (second priority)
+            if existing.s_id in candidate_ids:
                 continue
 
-            # Skip if start time isn't set
-            if not existing.start_time:
+            # Only check sessions at the same school that have a start time
+            if candidate.school != existing.school or not existing.start_time:
+                continue
+
+            if (existing.status or "").lower() != "booked":
                 continue
 
             existing_start = existing.start_time
-            existing_end = existing_start + timedelta(minutes=existing.length)
+            existing_end = existing_start + timedelta(minutes=existing.length or 0)
 
             # Check for overlap: (StartA < EndB) and (StartB < EndA)
             if candidate_start < existing_end and existing_start < candidate_end:
                 candidate.is_conflict = True
-                conflict_time = existing.start_time.strftime('%b %d @ %I:%M %p')
+
+                start_display = existing_start.strftime('%b %d @ %I:%M %p')
+                end_display = existing_end.strftime('%I:%M %p')
                 candidate.conflict_details = (
-                    f"Conflicts with '{existing.title}' on {conflict_time}."
+                    f"Conflicts with previously booked session '{existing.title}' "
+                    f"({start_display} – {end_display})."
                 )
+
                 # Once a conflict is found for the candidate, no need to check further
                 break
 
