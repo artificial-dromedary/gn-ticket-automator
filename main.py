@@ -224,9 +224,8 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions):
     and previously existing Airtable sessions for the same school.
 
     Two scenarios are considered:
-    1. Time conflicts against already booked sessions.
-    2. Existing GN tickets that were requested for non-booked sessions,
-       which need to be modified or cancelled before creating a new ticket.
+    1. Time conflicts against already booked sessions that already have GN tickets.
+    2. Candidate sessions that are booked (but no GN ticket yet) and overlap in time.
     """
 
     # Existing Airtable sessions take priority over the candidate sessions
@@ -242,7 +241,7 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions):
         candidate_end = (candidate_start + timedelta(minutes=candidate.length or 0)
                          if candidate_start else None)
 
-        # --- Priority 1: Previously booked sessions with overlapping times ---
+        # --- Priority 1: Previously booked sessions with GN tickets and overlapping times ---
         if candidate_start:
             for existing in existing_sessions:
                 if existing.s_id in candidate_ids:
@@ -252,6 +251,9 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions):
                     continue
 
                 if (existing.status or "").strip().lower() != "booked":
+                    continue
+
+                if not getattr(existing, 'gn_ticket_requested', False):
                     continue
 
                 if not existing.start_time:
@@ -275,37 +277,61 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions):
         if candidate.is_conflict:
             continue
 
-        # --- Priority 2: Existing GN ticket requests on non-booked sessions ---
-        for existing in existing_sessions:
-            if existing.s_id in candidate_ids:
+    # --- Priority 2: Conflicts within candidate sessions (booked/no GN ticket, same school/time overlap) ---
+    sessions_with_time = [
+        session for session in candidate_sessions if session.start_time
+    ]
+    for index, candidate in enumerate(sessions_with_time):
+        if candidate.is_conflict:
+            continue
+
+        if (candidate.status or "").strip().lower() != "booked":
+            continue
+
+        if getattr(candidate, 'gn_ticket_requested', False):
+            continue
+
+        candidate_start = candidate.start_time
+        candidate_end = candidate_start + timedelta(minutes=candidate.length or 0)
+
+        for other in sessions_with_time[index + 1:]:
+            if other.is_conflict:
                 continue
 
-            if candidate.school != existing.school:
+            if (other.status or "").strip().lower() != "booked":
                 continue
 
-            if not getattr(existing, 'gn_ticket_requested', False):
+            if getattr(other, 'gn_ticket_requested', False):
                 continue
 
-            if (existing.status or "").strip().lower() == "booked":
+            other_start = other.start_time
+            other_end = other_start + timedelta(minutes=other.length or 0)
+
+            if candidate.school != other.school:
                 continue
 
-            candidate.is_conflict = True
-            candidate.conflict_type = "gn_ticket"
-
-            status_display = existing.status or "Unknown status"
-            if existing.start_time:
-                ticket_time = existing.start_time.strftime('%b %d @ %I:%M %p %Z')
-                candidate.conflict_details = (
-                    f"School is available, but a GN ticket was already requested for "
-                    f"'{existing.title}' ({status_display}, {ticket_time}). "
-                    f"Modify or cancel that ticket before booking."
+            if candidate_start < other_end and other_start < candidate_end:
+                start_display = other_start.strftime('%b %d @ %I:%M %p')
+                end_display = other_end.strftime('%I:%M %p')
+                details = (
+                    f"Conflicts with another booked session '{other.title}' "
+                    f"({start_display} – {end_display})."
                 )
-            else:
-                candidate.conflict_details = (
-                    f"School is available, but a GN ticket was already requested for "
-                    f"'{existing.title}' ({status_display}). Modify or cancel that ticket before booking."
-                )
-            break
+
+                candidate.is_conflict = True
+                candidate.conflict_type = "time"
+                candidate.conflict_details = details
+
+                if not other.is_conflict:
+                    other_start_display = candidate_start.strftime('%b %d @ %I:%M %p')
+                    other_end_display = candidate_end.strftime('%I:%M %p')
+                    other.is_conflict = True
+                    other.conflict_type = "time"
+                    other.conflict_details = (
+                        f"Conflicts with another booked session '{candidate.title}' "
+                        f"({other_start_display} – {other_end_display})."
+                    )
+                break
 
     # --- Priority 3: Conflicts within candidate sessions (same teacher/time overlap) ---
     sessions_with_time = [
