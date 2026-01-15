@@ -307,6 +307,54 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions):
                 )
             break
 
+    # --- Priority 3: Conflicts within candidate sessions (same teacher/time overlap) ---
+    sessions_with_time = [
+        session for session in candidate_sessions if session.start_time
+    ]
+    for index, candidate in enumerate(sessions_with_time):
+        if candidate.is_conflict:
+            continue
+
+        candidate_start = candidate.start_time
+        candidate_end = candidate_start + timedelta(minutes=candidate.length or 0)
+        candidate_teacher = (candidate.teacher or "").strip().lower()
+        if not candidate_teacher:
+            continue
+
+        for other in sessions_with_time[index + 1:]:
+            if other.is_conflict:
+                continue
+
+            other_teacher = (other.teacher or "").strip().lower()
+            if candidate_teacher != other_teacher:
+                continue
+
+            other_start = other.start_time
+            other_end = other_start + timedelta(minutes=other.length or 0)
+
+            if candidate_start < other_end and other_start < candidate_end:
+                start_display = other_start.strftime('%b %d @ %I:%M %p')
+                end_display = other_end.strftime('%I:%M %p')
+                details = (
+                    f"Conflicts with another in-progress session '{other.title}' "
+                    f"({start_display} – {end_display})."
+                )
+
+                candidate.is_conflict = True
+                candidate.conflict_type = "time"
+                candidate.conflict_details = details
+
+                if not other.is_conflict:
+                    other_start_display = candidate_start.strftime('%b %d @ %I:%M %p')
+                    other_end_display = candidate_end.strftime('%I:%M %p')
+                    other.is_conflict = True
+                    other.conflict_type = "time"
+                    other.conflict_details = (
+                        f"Conflicts with another in-progress session '{candidate.title}' "
+                        f"({other_start_display} – {other_end_display})."
+                    )
+                break
+
     return candidate_sessions
 
 # --- Routes ---
