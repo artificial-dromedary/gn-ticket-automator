@@ -192,7 +192,12 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                 set_airtable_field(cn_session, "GN Ticket Requested", True, airtable_api_key)
 
                 successful_sessions.append({
+                    'session_id': cn_session.s_id,
                     'title': cn_session.title,
+                    'school': cn_session.school,
+                    'teacher': cn_session.teacher,
+                    'start_time': cn_session.start_time.isoformat() if cn_session.start_time else None,
+                    'length': cn_session.length,
                     'ticket_id': ticket_result.get('ticket_id', 'Unknown')
                 })
                 set_progress(progress_session_id, f"✅ Completed {cn_session.title}", 8, 8, "session-complete")
