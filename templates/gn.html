@@ -86,6 +86,30 @@ body {
     background-color: #d9edf7;
     border-color: #bce8f1;
 }
+
+.submission-log {
+  margin: 20px 0;
+  padding: 12px;
+  background: #f8f9fb;
+  border: 1px solid #d9e2ec;
+  border-radius: 6px;
+}
+.submission-log table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  background: white;
+}
+.submission-log th,
+.submission-log td {
+  border: 1px solid #e1e5eb;
+  text-align: left;
+  padding: 8px;
+  font-size: 13px;
+}
+.submission-log th {
+  background: #eef3f8;
+}
 </style>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script>
@@ -191,6 +215,40 @@ document.addEventListener('DOMContentLoaded', function() {
       </label>
     </div>
 
+    <div class="submission-log">
+      <strong>Submitted tickets (last 30 days)</strong>
+      {% if submitted_ticket_log %}
+      <table>
+        <thead>
+          <tr>
+            <th>Ticket ID</th>
+            <th>Session</th>
+            <th>School</th>
+            <th>Session Time</th>
+            <th>Submitted</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in submitted_ticket_log %}
+          <tr>
+            <td>{{ entry.ticket_id }}</td>
+            <td>{{ entry.title }}</td>
+            <td>{{ entry.school }}</td>
+            <td>
+              <span class="session-time" data-time="{{ entry.start_time or '' }}">{{ entry.start_time or 'Unknown' }}</span>
+            </td>
+            <td>
+              <span class="session-time" data-time="{{ entry.submitted_at or '' }}">{{ entry.submitted_at or 'Unknown' }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="margin-top: 8px;">No submitted tickets have been logged in the last 30 days.</p>
+      {% endif %}
+    </div>
+
     <p>
       <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
     </p>
@@ -199,7 +257,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <div class="gallery">
       {% if all_sessions %}
         {% for session in all_sessions %}
-        <div class="session{% if session.conflict_type == 'time' %} session-conflict{% elif session.conflict_type == 'gn_ticket' %} session-gn-warning{% endif %}">
+        <div class="session{% if session.conflict_type == 'time' %} session-conflict{% elif session.conflict_type in ['gn_ticket', 'ghost_ticket'] %} session-gn-warning{% endif %}">
           <!-- Remove button with hidden form fields -->
           <div style="text-align: left; margin-bottom: 10px;">
             <button type="button" onclick="removeSession(this)" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
@@ -216,6 +274,10 @@ document.addEventListener('DOMContentLoaded', function() {
           {% elif session.conflict_type == 'gn_ticket' %}
           <div class="conflict-banner conflict-gn-ticket">
             ⚠️ GN ticket follow-up needed: {{ session.conflict_details }}
+          </div>
+          {% elif session.conflict_type == 'ghost_ticket' %}
+          <div class="conflict-banner conflict-gn-ticket">
+            ⚠️ Rebooked/ghost ticket: {{ session.conflict_details }}
           </div>
           {% endif %}
 

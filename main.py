@@ -100,6 +100,7 @@ import gn_ticket
 from user_profiles import user_manager
 from airtable_integration import create_airtable_client
 from updater import AppUpdater, APP_VERSION
+from ticket_submission_log import TicketSubmissionLog, parse_log_start_and_end
 from google_auth_oauthlib.flow import InstalledAppFlow
 from collections import deque
 
@@ -147,6 +148,10 @@ CONFIG, CONFIG_VALID = load_config_from_env()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+
+TICKET_LOG_FILE = get_app_data_dir() / 'ticket_submission_log.json'
+ticket_log = TicketSubmissionLog(TICKET_LOG_FILE, retention_days=30)
 
 def get_redirect_uri_for_flow():
     """Determine the redirect URI to use for the OAuth flow, prioritizing the configured Flask route."""
@@ -218,7 +223,7 @@ def require_auth(f):
     decorated_function.__name__ = f.__name__
     return decorated_function
 
-def check_for_time_conflicts(candidate_sessions, existing_sessions):
+def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_ticket_entries=None):
     """
     Checks for conflicts between candidate sessions (new GN ticket requests)
     and previously existing Airtable sessions for the same school.
@@ -230,6 +235,7 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions):
 
     # Existing Airtable sessions take priority over the candidate sessions
     candidate_ids = {session.s_id for session in candidate_sessions}
+    historical_ticket_entries = historical_ticket_entries or []
 
     for candidate in candidate_sessions:
         # Reset conflict flags for safety if function called multiple times
@@ -270,6 +276,37 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions):
                     end_display = existing_end.strftime('%I:%M %p')
                     candidate.conflict_details = (
                         f"Conflicts with previously booked session '{existing.title}' "
+                        f"({start_display} – {end_display})."
+                    )
+                    break
+
+        if candidate.is_conflict:
+            continue
+
+        # --- Priority 1b: Historical ticket log conflicts (rebooked/ghost tickets) ---
+        if candidate_start:
+            for historical_entry in historical_ticket_entries:
+                if historical_entry.get('session_id') == candidate.s_id:
+                    continue
+
+                historical_school = (historical_entry.get('school') or '').strip().lower()
+                if historical_school != (candidate.school or '').strip().lower():
+                    continue
+
+                historical_start, historical_end = parse_log_start_and_end(historical_entry)
+                if not historical_start:
+                    continue
+
+                if candidate_start < historical_end and historical_start < candidate_end:
+                    candidate.is_conflict = True
+                    candidate.conflict_type = "ghost_ticket"
+
+                    start_display = historical_start.strftime('%b %d @ %I:%M %p')
+                    end_display = historical_end.strftime('%I:%M %p')
+                    ticket_id = historical_entry.get('ticket_id', 'Unknown')
+                    candidate.conflict_details = (
+                        f"Rebooked/ghost ticket conflict with submitted ticket {ticket_id} "
+                        f"for '{historical_entry.get('title', 'Unknown Session')}' "
                         f"({start_display} – {end_display})."
                     )
                     break
@@ -519,7 +556,11 @@ def gn_ticket_page():
                 )
 
                 # 3. Check for conflicts and update the candidate sessions list
-                candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions)
+                historical_entries = ticket_log.get_entries(user['email'])
+                candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
+
+        submitted_ticket_log = ticket_log.get_entries(user['email'])
+        submitted_ticket_log = sorted(submitted_ticket_log, key=lambda entry: entry.get('submitted_at', ''), reverse=True)
 
         session['book_sessions'] = candidate_sessions
 
@@ -530,6 +571,7 @@ def gn_ticket_page():
         return render_template(
             "gn.html",
             all_sessions=candidate_sessions,
+            submitted_ticket_log=submitted_ticket_log,
             user=user,
             buffer_before=buffer_before,
             buffer_after=buffer_after,
@@ -569,7 +611,7 @@ def do_gn_ticket():
 
     def run_booking():
         try:
-            gn_ticket.gn_ticket_handler(
+            booking_results = gn_ticket.gn_ticket_handler(
                 send_to_gn,
                 user['email'],
                 profile.get('servicenow_password'),
@@ -583,6 +625,7 @@ def do_gn_ticket():
                 buffer_before=buffer_before,
                 buffer_after=buffer_after
             )
+            ticket_log.add_successful_submissions(user['email'], booking_results.get('successful_sessions', []))
         except Exception as e:
             set_progress(progress_session_id, f"Critical error during booking: {str(e)}", status="error")
             logging.error(f"Booking thread failed: {e}", exc_info=True)
