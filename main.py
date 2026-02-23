@@ -242,6 +242,8 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
         candidate.is_conflict = False
         candidate.conflict_details = ""
         candidate.conflict_type = None
+        candidate.conflict_start_iso = None
+        candidate.conflict_end_iso = None
 
         candidate_start = candidate.start_time
         candidate_end = (candidate_start + timedelta(minutes=candidate.length or 0)
@@ -271,13 +273,11 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                 if candidate_start < existing_end and existing_start < candidate_end:
                     candidate.is_conflict = True
                     candidate.conflict_type = "time"
-
-                    start_display = existing_start.strftime('%b %d @ %I:%M %p')
-                    end_display = existing_end.strftime('%I:%M %p')
                     candidate.conflict_details = (
-                        f"Conflicts with previously booked session '{existing.title}' "
-                        f"({start_display} – {end_display})."
+                        f"Conflicts with previously booked session '{existing.title}'."
                     )
+                    candidate.conflict_start_iso = existing_start.isoformat()
+                    candidate.conflict_end_iso = existing_end.isoformat()
                     break
 
         if candidate.is_conflict:
@@ -300,15 +300,13 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                 if candidate_start < historical_end and historical_start < candidate_end:
                     candidate.is_conflict = True
                     candidate.conflict_type = "ghost_ticket"
-
-                    start_display = historical_start.strftime('%b %d @ %I:%M %p')
-                    end_display = historical_end.strftime('%I:%M %p')
                     ticket_id = historical_entry.get('ticket_id', 'Unknown')
                     candidate.conflict_details = (
                         f"Rebooked/ghost ticket conflict with submitted ticket {ticket_id} "
-                        f"for '{historical_entry.get('title', 'Unknown Session')}' "
-                        f"({start_display} – {end_display})."
+                        f"for '{historical_entry.get('title', 'Unknown Session')}'."
                     )
+                    candidate.conflict_start_iso = historical_start.isoformat()
+                    candidate.conflict_end_iso = historical_end.isoformat()
                     break
 
         if candidate.is_conflict:
@@ -348,26 +346,24 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                 continue
 
             if candidate_start < other_end and other_start < candidate_end:
-                start_display = other_start.strftime('%b %d @ %I:%M %p')
-                end_display = other_end.strftime('%I:%M %p')
                 details = (
-                    f"Conflicts with another booked session '{other.title}' "
-                    f"({start_display} – {end_display})."
+                    f"Conflicts with another booked session '{other.title}'."
                 )
 
                 candidate.is_conflict = True
                 candidate.conflict_type = "time"
                 candidate.conflict_details = details
+                candidate.conflict_start_iso = other_start.isoformat()
+                candidate.conflict_end_iso = other_end.isoformat()
 
                 if not other.is_conflict:
-                    other_start_display = candidate_start.strftime('%b %d @ %I:%M %p')
-                    other_end_display = candidate_end.strftime('%I:%M %p')
                     other.is_conflict = True
                     other.conflict_type = "time"
                     other.conflict_details = (
-                        f"Conflicts with another booked session '{candidate.title}' "
-                        f"({other_start_display} – {other_end_display})."
+                        f"Conflicts with another booked session '{candidate.title}'."
                     )
+                    other.conflict_start_iso = candidate_start.isoformat()
+                    other.conflict_end_iso = candidate_end.isoformat()
                 break
 
     # --- Priority 3: Conflicts within candidate sessions (same teacher/time overlap) ---
@@ -396,26 +392,24 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
             other_end = other_start + timedelta(minutes=other.length or 0)
 
             if candidate_start < other_end and other_start < candidate_end:
-                start_display = other_start.strftime('%b %d @ %I:%M %p')
-                end_display = other_end.strftime('%I:%M %p')
                 details = (
-                    f"Conflicts with another in-progress session '{other.title}' "
-                    f"({start_display} – {end_display})."
+                    f"Conflicts with another in-progress session '{other.title}'."
                 )
 
                 candidate.is_conflict = True
                 candidate.conflict_type = "time"
                 candidate.conflict_details = details
+                candidate.conflict_start_iso = other_start.isoformat()
+                candidate.conflict_end_iso = other_end.isoformat()
 
                 if not other.is_conflict:
-                    other_start_display = candidate_start.strftime('%b %d @ %I:%M %p')
-                    other_end_display = candidate_end.strftime('%I:%M %p')
                     other.is_conflict = True
                     other.conflict_type = "time"
                     other.conflict_details = (
-                        f"Conflicts with another in-progress session '{candidate.title}' "
-                        f"({other_start_display} – {other_end_display})."
+                        f"Conflicts with another in-progress session '{candidate.title}'."
                     )
+                    other.conflict_start_iso = candidate_start.isoformat()
+                    other.conflict_end_iso = candidate_end.isoformat()
                 break
 
     return candidate_sessions
