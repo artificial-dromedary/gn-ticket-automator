@@ -160,6 +160,43 @@ document.addEventListener('DOMContentLoaded', function() {
 
     element.textContent = formatted;
   });
+
+
+  const conflictRanges = document.querySelectorAll('.conflict-time-range[data-start][data-end]');
+
+  conflictRanges.forEach(function(element) {
+    const startIso = element.getAttribute('data-start');
+    const endIso = element.getAttribute('data-end');
+
+    if (!startIso || !endIso) {
+      return;
+    }
+
+    const startDate = new Date(startIso);
+    const endDate = new Date(endIso);
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return;
+    }
+
+    const startFormatted = new Intl.DateTimeFormat([], {
+      month: 'short',
+      day: '2-digit',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    }).format(startDate);
+
+    const endFormatted = new Intl.DateTimeFormat([], {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    }).format(endDate);
+
+    element.textContent = ` (${startFormatted} – ${endFormatted}).`;
+  });
 });
 </script>
 </head>
@@ -270,6 +307,9 @@ document.addEventListener('DOMContentLoaded', function() {
           {% if session.conflict_type == 'time' %}
           <div class="conflict-banner conflict-time">
             ⚠️ Time conflict: {{ session.conflict_details }}
+            {% if session.conflict_start_iso and session.conflict_end_iso %}
+              <span class="conflict-time-range" data-start="{{ session.conflict_start_iso }}" data-end="{{ session.conflict_end_iso }}"></span>
+            {% endif %}
           </div>
           {% elif session.conflict_type == 'gn_ticket' %}
           <div class="conflict-banner conflict-gn-ticket">
