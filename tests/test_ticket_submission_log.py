@@ -76,3 +76,5 @@ def test_conflict_detection_flags_ghost_ticket_overlap():
     assert result[0].conflict_type == 'ghost_ticket'
     assert 'Rebooked/ghost ticket' in result[0].conflict_details
     assert 'REQ12345' in result[0].conflict_details
+    assert result[0].conflict_start_iso == (start + timedelta(minutes=30)).isoformat()
+    assert result[0].conflict_end_iso == (start + timedelta(minutes=90)).isoformat()
