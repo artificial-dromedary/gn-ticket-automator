@@ -13,6 +13,8 @@ from pathlib import Path
 import logging
 import jwt
 import uuid
+import redis
+from sqlalchemy import select
 
 RUN_ID = uuid.uuid4().hex
 
@@ -100,9 +102,13 @@ import gn_ticket
 from user_profiles import user_manager
 from airtable_integration import create_airtable_client
 from updater import AppUpdater, APP_VERSION
-from ticket_submission_log import TicketSubmissionLog, parse_log_start_and_end
-from google_auth_oauthlib.flow import InstalledAppFlow
+from ticket_submission_log import TicketSubmissionLog
+from google_auth_oauthlib.flow import Flow
 from collections import deque
+from conflict import check_for_time_conflicts
+from db import SessionLocal
+from models import ScanResult, User
+from tasks import scan_user
 
 # Global progress storage. Each session keeps a deque of the most recent entries
 # (up to 50) along with a monotonically increasing sequence counter.
@@ -140,8 +146,13 @@ if not env_loaded:
     logging.error("Failed to load .env file. Please ensure it exists and is accessible.")
 
 # Session configuration
-app.config['SESSION_TYPE'] = 'filesystem'
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+redis_url = os.getenv("REDIS_URL")
+if redis_url:
+    app.config['SESSION_TYPE'] = 'redis'
+    app.config['SESSION_REDIS'] = redis.from_url(redis_url)
+else:
+    app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
 
 CONFIG, CONFIG_VALID = load_config_from_env()
@@ -150,8 +161,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 
-TICKET_LOG_FILE = get_app_data_dir() / 'ticket_submission_log.json'
-ticket_log = TicketSubmissionLog(TICKET_LOG_FILE, retention_days=30)
+ticket_log = TicketSubmissionLog(retention_days=30)
 
 def get_redirect_uri_for_flow():
     """Determine the redirect URI to use for the OAuth flow, prioritizing the configured Flask route."""
@@ -159,24 +169,22 @@ def get_redirect_uri_for_flow():
 
 
 def create_flow():
-    """Create Google OAuth flow for desktop application"""
+    """Create Google OAuth flow for web application"""
     if not CONFIG_VALID:
         return None
 
-    # For installed/desktop apps, use this configuration
     client_config_dict = {
-        "installed": {
+        "web": {
             "client_id": CONFIG['GOOGLE_CLIENT_ID'],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "client_secret": CONFIG['GOOGLE_CLIENT_SECRET'],  # Required even for desktop apps
+            "client_secret": CONFIG['GOOGLE_CLIENT_SECRET'],
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "redirect_uris": ["http://127.0.0.1:5000/oauth/callback", "urn:ietf:wg:oauth:2.0:oob"]
+            "redirect_uris": [CONFIG['OAUTH_REDIRECT_URI']]
         }
     }
 
-    # Use InstalledAppFlow for desktop applications
-    flow = InstalledAppFlow.from_client_config(
+    flow = Flow.from_client_config(
         client_config_dict,
         scopes=['openid', 'https://www.googleapis.com/auth/userinfo.email',
                 'https://www.googleapis.com/auth/userinfo.profile']
@@ -223,196 +231,6 @@ def require_auth(f):
     decorated_function.__name__ = f.__name__
     return decorated_function
 
-def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_ticket_entries=None):
-    """
-    Checks for conflicts between candidate sessions (new GN ticket requests)
-    and previously existing Airtable sessions for the same school.
-
-    Two scenarios are considered:
-    1. Time conflicts against already booked sessions that already have GN tickets.
-    2. Candidate sessions that are booked (but no GN ticket yet) and overlap in time.
-    """
-
-    # Existing Airtable sessions take priority over the candidate sessions
-    candidate_ids = {session.s_id for session in candidate_sessions}
-    historical_ticket_entries = historical_ticket_entries or []
-
-    for candidate in candidate_sessions:
-        # Reset conflict flags for safety if function called multiple times
-        candidate.is_conflict = False
-        candidate.conflict_details = ""
-        candidate.conflict_type = None
-        candidate.conflict_start_iso = None
-        candidate.conflict_end_iso = None
-
-        candidate_start = candidate.start_time
-        candidate_end = (candidate_start + timedelta(minutes=candidate.length or 0)
-                         if candidate_start else None)
-
-        # --- Priority 1: Previously booked sessions with GN tickets and overlapping times ---
-        if candidate_start:
-            for existing in existing_sessions:
-                if existing.s_id in candidate_ids:
-                    continue
-
-                if candidate.school != existing.school:
-                    continue
-
-                if (existing.status or "").strip().lower() != "booked":
-                    continue
-
-                if not getattr(existing, 'gn_ticket_requested', False):
-                    continue
-
-                if not existing.start_time:
-                    continue
-
-                existing_start = existing.start_time
-                existing_end = existing_start + timedelta(minutes=existing.length or 0)
-
-                if candidate_start < existing_end and existing_start < candidate_end:
-                    candidate.is_conflict = True
-                    candidate.conflict_type = "time"
-                    candidate.conflict_details = (
-                        f"Conflicts with previously booked session '{existing.title}'."
-                    )
-                    candidate.conflict_start_iso = existing_start.isoformat()
-                    candidate.conflict_end_iso = existing_end.isoformat()
-                    break
-
-        if candidate.is_conflict:
-            continue
-
-        # --- Priority 1b: Historical ticket log conflicts (rebooked/ghost tickets) ---
-        if candidate_start:
-            for historical_entry in historical_ticket_entries:
-                if historical_entry.get('session_id') == candidate.s_id:
-                    continue
-
-                historical_school = (historical_entry.get('school') or '').strip().lower()
-                if historical_school != (candidate.school or '').strip().lower():
-                    continue
-
-                historical_start, historical_end = parse_log_start_and_end(historical_entry)
-                if not historical_start:
-                    continue
-
-                if candidate_start < historical_end and historical_start < candidate_end:
-                    candidate.is_conflict = True
-                    candidate.conflict_type = "ghost_ticket"
-                    ticket_id = historical_entry.get('ticket_id', 'Unknown')
-                    candidate.conflict_details = (
-                        f"Rebooked/ghost ticket conflict with submitted ticket {ticket_id} "
-                        f"for '{historical_entry.get('title', 'Unknown Session')}'."
-                    )
-                    candidate.conflict_start_iso = historical_start.isoformat()
-                    candidate.conflict_end_iso = historical_end.isoformat()
-                    break
-
-        if candidate.is_conflict:
-            continue
-
-    # --- Priority 2: Conflicts within candidate sessions (booked/no GN ticket, same school/time overlap) ---
-    sessions_with_time = [
-        session for session in candidate_sessions if session.start_time
-    ]
-    for index, candidate in enumerate(sessions_with_time):
-        if candidate.is_conflict:
-            continue
-
-        if (candidate.status or "").strip().lower() != "booked":
-            continue
-
-        if getattr(candidate, 'gn_ticket_requested', False):
-            continue
-
-        candidate_start = candidate.start_time
-        candidate_end = candidate_start + timedelta(minutes=candidate.length or 0)
-
-        for other in sessions_with_time[index + 1:]:
-            if other.is_conflict:
-                continue
-
-            if (other.status or "").strip().lower() != "booked":
-                continue
-
-            if getattr(other, 'gn_ticket_requested', False):
-                continue
-
-            other_start = other.start_time
-            other_end = other_start + timedelta(minutes=other.length or 0)
-
-            if candidate.school != other.school:
-                continue
-
-            if candidate_start < other_end and other_start < candidate_end:
-                details = (
-                    f"Conflicts with another booked session '{other.title}'."
-                )
-
-                candidate.is_conflict = True
-                candidate.conflict_type = "time"
-                candidate.conflict_details = details
-                candidate.conflict_start_iso = other_start.isoformat()
-                candidate.conflict_end_iso = other_end.isoformat()
-
-                if not other.is_conflict:
-                    other.is_conflict = True
-                    other.conflict_type = "time"
-                    other.conflict_details = (
-                        f"Conflicts with another booked session '{candidate.title}'."
-                    )
-                    other.conflict_start_iso = candidate_start.isoformat()
-                    other.conflict_end_iso = candidate_end.isoformat()
-                break
-
-    # --- Priority 3: Conflicts within candidate sessions (same teacher/time overlap) ---
-    sessions_with_time = [
-        session for session in candidate_sessions if session.start_time
-    ]
-    for index, candidate in enumerate(sessions_with_time):
-        if candidate.is_conflict:
-            continue
-
-        candidate_start = candidate.start_time
-        candidate_end = candidate_start + timedelta(minutes=candidate.length or 0)
-        candidate_teacher = (candidate.teacher or "").strip().lower()
-        if not candidate_teacher:
-            continue
-
-        for other in sessions_with_time[index + 1:]:
-            if other.is_conflict:
-                continue
-
-            other_teacher = (other.teacher or "").strip().lower()
-            if candidate_teacher != other_teacher:
-                continue
-
-            other_start = other.start_time
-            other_end = other_start + timedelta(minutes=other.length or 0)
-
-            if candidate_start < other_end and other_start < candidate_end:
-                details = (
-                    f"Conflicts with another in-progress session '{other.title}'."
-                )
-
-                candidate.is_conflict = True
-                candidate.conflict_type = "time"
-                candidate.conflict_details = details
-                candidate.conflict_start_iso = other_start.isoformat()
-                candidate.conflict_end_iso = other_end.isoformat()
-
-                if not other.is_conflict:
-                    other.is_conflict = True
-                    other.conflict_type = "time"
-                    other.conflict_details = (
-                        f"Conflicts with another in-progress session '{candidate.title}'."
-                    )
-                    other.conflict_start_iso = candidate_start.isoformat()
-                    other.conflict_end_iso = candidate_end.isoformat()
-                break
-
-    return candidate_sessions
 
 # --- Routes ---
 @app.route("/")
@@ -428,8 +246,8 @@ def login():
 
     # Generate authorization URL and show it to user
     try:
-        flow.redirect_uri = get_redirect_uri_for_flow()  # Ensure consistency for generating the auth URL
-        auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true')
+        flow.redirect_uri = get_redirect_uri_for_flow()
+        auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
         session['oauth_state'] = state
 
         return render_template("manual_oauth.html", auth_url=auth_url)
@@ -456,8 +274,7 @@ def oauth_callback():
     flow.redirect_uri = get_redirect_uri_for_flow()
 
     try:
-        # Use the authorization code directly for installed apps
-        flow.fetch_token(code=request.args.get('code'))
+        flow.fetch_token(authorization_response=request.url)
 
         token_payload = jwt.decode(flow.credentials.id_token, options={"verify_signature": False})
         user_info = {
@@ -472,6 +289,7 @@ def oauth_callback():
             return render_template("access_denied.html", email=user_info['email'],
                                    allowed_domains=CONFIG['ALLOWED_DOMAINS'])
 
+        user_manager.upsert_user(user_info['email'], user_info.get('name'), user_info.get('picture', ''))
         session['user'] = user_info
 
         if user_manager.is_profile_complete(user_info['email']) is False:
@@ -534,41 +352,61 @@ def gn_ticket_page():
                                current_version=session.get('current_version'), user=user, auto_detected=True)
 
     try:
+        prefs = profile.get('preferences', {})
+        buffer_before = prefs.get('buffer_before', 10)
+        buffer_after = prefs.get('buffer_after', 10)
+        window_past_days = prefs.get('window_past_days', 14)
+        window_future_days = prefs.get('window_future_days', 90)
+        auto_booking_enabled = prefs.get('auto_booking_enabled', False)
+
         airtable_client = create_airtable_client(profile['airtable_api_key'])
-        candidate_sessions = airtable_client.get_booked_sessions(user_email=user['email'])
+        candidate_sessions = airtable_client.get_booked_sessions(
+            user_email=user['email'],
+            window_past_days=window_past_days,
+            window_future_days=window_future_days,
+        )
 
         # --- CONFLICT DETECTION LOGIC ---
         if candidate_sessions:
-            # 1. Get unique school names from the sessions to be booked
             school_names = list(set(s.school for s in candidate_sessions if s.school != 'Unknown School'))
-
             if school_names:
-                # 2. Fetch all existing sessions for those schools so we can check both
-                #    time conflicts (booked) and GN ticket warnings (non-booked with tickets)
-                existing_sessions = airtable_client.get_all_sessions_for_schools(
-                    school_names
-                )
-
-                # 3. Check for conflicts and update the candidate sessions list
+                existing_sessions = airtable_client.get_all_sessions_for_schools(school_names)
                 historical_entries = ticket_log.get_entries(user['email'])
                 candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
 
-        submitted_ticket_log = ticket_log.get_entries(user['email'])
+        submitted_ticket_log = ticket_log.get_entries(user['email'], window_past_days=window_past_days)
         submitted_ticket_log = sorted(submitted_ticket_log, key=lambda entry: entry.get('submitted_at', ''), reverse=True)
 
         session['book_sessions'] = candidate_sessions
 
-        prefs = profile.get('preferences', {})
-        buffer_before = prefs.get('buffer_before', 10)
-        buffer_after = prefs.get('buffer_after', 10)
+        latest_conflicts = []
+        with SessionLocal() as db:
+            db_user = db.execute(
+                select(User).where(User.email == user['email'].strip().lower())
+            ).scalar_one_or_none()
+            if db_user:
+                scan = db.execute(
+                    select(ScanResult)
+                    .where(ScanResult.user_id == db_user.id)
+                    .order_by(ScanResult.scanned_at.desc())
+                ).scalars().first()
+                if scan and scan.conflicts_json:
+                    try:
+                        latest_conflicts = json.loads(scan.conflicts_json)
+                    except (TypeError, json.JSONDecodeError):
+                        latest_conflicts = []
 
         return render_template(
             "gn.html",
             all_sessions=candidate_sessions,
             submitted_ticket_log=submitted_ticket_log,
+            latest_conflicts=latest_conflicts,
             user=user,
             buffer_before=buffer_before,
             buffer_after=buffer_after,
+            window_past_days=window_past_days,
+            window_future_days=window_future_days,
+            auto_booking_enabled=auto_booking_enabled,
         )
     except Exception as e:
         logging.error(f"Error loading sessions: {e}", exc_info=True)
@@ -703,6 +541,29 @@ def setup_profile():
     existing_profile = user_manager.load_profile(user['email']) or {}
     error = request.args.get('error')
     return render_template("setup_profile.html", user=user, profile=existing_profile, error=error)
+
+
+@app.route("/preferences", methods=["POST"])
+@require_auth
+def update_preferences():
+    user = session['user']
+    prefs = {
+        "buffer_before": int(request.form.get("buffer_before", 10) or 0),
+        "buffer_after": int(request.form.get("buffer_after", 10) or 0),
+        "window_past_days": int(request.form.get("window_past_days", 14) or 0),
+        "window_future_days": int(request.form.get("window_future_days", 90) or 0),
+        "auto_booking_enabled": request.form.get("auto_booking_enabled") == "yes",
+    }
+    user_manager.update_preferences(user['email'], prefs)
+    return redirect(url_for('gn_ticket_page'))
+
+
+@app.route("/auto/run", methods=["POST"])
+@require_auth
+def run_auto_scan_now():
+    user = session['user']
+    scan_user.delay(user['email'])
+    return redirect(url_for('gn_ticket_page'))
 
 
 @app.route("/update/check")

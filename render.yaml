@@ -1,0 +1,126 @@
+services:
+  - type: redis
+    name: gn-ticket-redis
+    plan: starter
+
+  - type: web
+    name: gn-ticket-web
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gn-ticket-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: gn-ticket-redis
+          type: redis
+          property: connectionString
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: OAUTH_REDIRECT_URI
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: CHATGPT_API_KEY
+        sync: false
+
+  - type: worker
+    name: gn-ticket-worker
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A tasks.celery_app worker -l info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gn-ticket-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: gn-ticket-redis
+          type: redis
+          property: connectionString
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: OAUTH_REDIRECT_URI
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: CHATGPT_API_KEY
+        sync: false
+
+  - type: worker
+    name: gn-ticket-beat
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A tasks.celery_app beat -l info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gn-ticket-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: gn-ticket-redis
+          type: redis
+          property: connectionString
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: OAUTH_REDIRECT_URI
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: CHATGPT_API_KEY
+        sync: false
+
+databases:
+  - name: gn-ticket-db
+    plan: starter
+    databaseName: gn_ticket
