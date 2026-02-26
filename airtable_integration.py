@@ -1,11 +1,13 @@
 import requests
 import json
 from datetime import datetime
+import os
 from dateutil import parser
 import pytz
 import logging
 
 logger = logging.getLogger(__name__)
+REQUEST_TIMEOUT = int(os.getenv("REQUESTS_TIMEOUT", "15"))
 
 
 class AirtableSession:
@@ -221,7 +223,7 @@ class AirtableIntegration:
                 params['offset'] = offset
 
             try:
-                response = requests.get(self.base_url, headers=self.headers, params=params)
+                response = requests.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
 
                 data = response.json()
@@ -273,7 +275,7 @@ class AirtableIntegration:
             window_future_days=window_future_days,
         )
 
-    def get_all_sessions_for_schools(self, school_names, status_filters=None):
+    def get_all_sessions_for_schools(self, school_names, status_filters=None, window_past_days=14, window_future_days=90):
         """
         Get all sessions from Airtable for a specific list of schools and statuses.
 
@@ -309,6 +311,14 @@ class AirtableIntegration:
                 else:
                     filter_parts.append(f"OR({', '.join(status_conditions)})")
 
+            # Date window filter
+            filter_parts.append(
+                f"IS_AFTER({{Session Start Date/Time}}, DATEADD(TODAY(), -{int(window_past_days)}, 'day'))"
+            )
+            filter_parts.append(
+                f"IS_BEFORE({{Session Start Date/Time}}, DATEADD(TODAY(), {int(window_future_days)}, 'day'))"
+            )
+
             # Combine filters
             filter_formula = f"AND({', '.join(filter_parts)})"
 
@@ -317,7 +327,7 @@ class AirtableIntegration:
                 params['offset'] = offset
 
             try:
-                response = requests.get(self.base_url, headers=self.headers, params=params)
+                response = requests.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
                 data = response.json()
                 for record in data.get('records', []):
@@ -348,7 +358,7 @@ class AirtableIntegration:
         }
 
         try:
-            response = requests.patch(url, headers=self.headers, json=data)
+            response = requests.patch(url, headers=self.headers, json=data, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -360,7 +370,7 @@ class AirtableIntegration:
         try:
             # Try to fetch just one record to test access
             params = {'pageSize': 1}
-            response = requests.get(self.base_url, headers=self.headers, params=params)
+            response = requests.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
 
             data = response.json()

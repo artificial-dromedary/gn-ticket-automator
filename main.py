@@ -370,7 +370,12 @@ def gn_ticket_page():
         if candidate_sessions:
             school_names = list(set(s.school for s in candidate_sessions if s.school != 'Unknown School'))
             if school_names:
-                existing_sessions = airtable_client.get_all_sessions_for_schools(school_names)
+                existing_sessions = airtable_client.get_all_sessions_for_schools(
+                    school_names,
+                    status_filters=["Booked"],
+                    window_past_days=window_past_days,
+                    window_future_days=window_future_days,
+                )
                 historical_entries = ticket_log.get_entries(user['email'])
                 candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
 

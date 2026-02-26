@@ -76,7 +76,12 @@ def scan_user(user_email):
     conflicts = []
     if candidate_sessions:
         school_names = list(set(s.school for s in candidate_sessions if s.school != "Unknown School"))
-        existing_sessions = airtable_client.get_all_sessions_for_schools(school_names) if school_names else []
+        existing_sessions = airtable_client.get_all_sessions_for_schools(
+            school_names,
+            status_filters=["Booked"],
+            window_past_days=window_past_days,
+            window_future_days=window_future_days,
+        ) if school_names else []
         historical_entries = TicketSubmissionLog().get_entries(user_email)
         candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
         conflicts = [s for s in candidate_sessions if s.is_conflict]
