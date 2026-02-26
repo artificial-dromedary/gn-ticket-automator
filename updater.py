@@ -12,8 +12,13 @@ import threading
 import time
 from pathlib import Path
 from packaging import version
-import tkinter as tk
-from tkinter import ttk
+
+try:
+    import tkinter as tk
+    from tkinter import ttk
+    TK_AVAILABLE = True
+except Exception:
+    TK_AVAILABLE = False
 
 # CONFIGURATION - Update these values for your releases:
 APP_VERSION = "1.2.5 Feb2026"  # Update this with each release
@@ -129,6 +134,8 @@ class AppUpdater:
 
     def show_native_progress_window(self, queue):
         """Displays a simple Tkinter window to show update progress."""
+        if not TK_AVAILABLE:
+            raise RuntimeError("Tkinter is not available in this environment.")
         root = tk.Tk()
         root.title("Updating GN Ticket Automator")
         root.geometry("400x120")

@@ -149,7 +149,7 @@ class AirtableIntegration:
             "Content-Type": "application/json"
         }
 
-    def get_sessions(self, status_filters=None, user_email=None):
+    def get_sessions(self, status_filters=None, user_email=None, window_past_days=14, window_future_days=90):
         """
         Get sessions from Airtable with optional filtering
 
@@ -185,8 +185,13 @@ class AirtableIntegration:
                 # ADDED: Exclude already processed sessions
                 filter_parts.append("NOT(FIND('#gn-submitted', {GN Ticket ID}) > 0)")
 
-                # ADDED: Only include sessions that are today or in the future
-                filter_parts.append("IS_AFTER({Session Start Date/Time}, DATEADD(TODAY(), -1, 'day'))")
+                # ADDED: Only include sessions within the window
+                filter_parts.append(
+                    f"IS_AFTER({{Session Start Date/Time}}, DATEADD(TODAY(), -{int(window_past_days)}, 'day'))"
+                )
+                filter_parts.append(
+                    f"IS_BEFORE({{Session Start Date/Time}}, DATEADD(TODAY(), {int(window_future_days)}, 'day'))"
+                )
 
                 # ADDED: Exclude sessions where GN Ticket has already been requested
                 filter_parts.append("NOT({GN Ticket Requested} = TRUE())")
@@ -258,10 +263,15 @@ class AirtableIntegration:
         print(f"✅ Found {len(sessions)} Nunavut sessions{user_filter_msg} that haven't been processed yet")
         return sessions
 
-    def get_booked_sessions(self, user_email=None):
+    def get_booked_sessions(self, user_email=None, window_past_days=14, window_future_days=90):
         """Get sessions with 'Booked' status"""
         # FIXED: Use the correct status value
-        return self.get_sessions(status_filters=["Booked"], user_email=user_email)
+        return self.get_sessions(
+            status_filters=["Booked"],
+            user_email=user_email,
+            window_past_days=window_past_days,
+            window_future_days=window_future_days,
+        )
 
     def get_all_sessions_for_schools(self, school_names, status_filters=None):
         """

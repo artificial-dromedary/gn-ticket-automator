@@ -1,6 +1,11 @@
 # Flask and web framework dependencies
 Flask>=2.3.0
 Flask-Session>=0.5.0
+SQLAlchemy>=2.0.0
+psycopg2-binary>=2.9.9
+redis>=5.0.0
+celery>=5.3.6
+gunicorn>=21.2.0
 
 # Google OAuth dependencies (Updated to resolve client_secret error)
 # Using '>=1.2.0' for google-auth-oauthlib is critical for the fix.

@@ -229,6 +229,44 @@ document.addEventListener('DOMContentLoaded', function() {
   <h3>{{ user.name if user else 'User' }}</h3>
 </section>
 
+<div class="content-wrapper">
+  <form id="preferences" action="/preferences" method="post">
+    <div style="margin: 15px 0; padding: 12px; background: #eef6ff; border-radius: 6px;">
+      <strong>Dashboard Settings</strong>
+      <div style="margin-top: 10px;">
+        <label style="margin-right: 20px;">
+          <input type="checkbox" name="auto_booking_enabled" value="yes" {% if auto_booking_enabled %}checked{% endif %}>
+          Enable hourly auto-booking
+        </label>
+      </div>
+      <div style="margin-top: 10px;">
+        <label style="margin-right: 10px;">
+          Show past days:
+          <input type="number" name="window_past_days" value="{{ window_past_days }}" style="width: 70px;">
+        </label>
+        <label>
+          Show future days:
+          <input type="number" name="window_future_days" value="{{ window_future_days }}" style="width: 70px;">
+        </label>
+      </div>
+      <div style="margin-top: 10px;">
+        <label style="margin-right: 10px;">
+          Minutes before:
+          <input type="number" name="buffer_before" value="{{ buffer_before }}" style="width: 70px;">
+        </label>
+        <label>
+          Minutes after:
+          <input type="number" name="buffer_after" value="{{ buffer_after }}" style="width: 70px;">
+        </label>
+      </div>
+      <div style="margin-top: 12px;">
+        <button type="submit">Save settings</button>
+        <button type="submit" formaction="/auto/run" style="margin-left: 10px;">Run auto scan now</button>
+      </div>
+    </div>
+  </form>
+</div>
+
 <!-- Main Form and Session Content -->
 <div class="content-wrapper">
   <form id="booker" name="booker" action="/gn_ticket/book_sessions" method="post">
@@ -241,19 +279,11 @@ document.addEventListener('DOMContentLoaded', function() {
       </label>
     </div>
 
-    <div style="margin: 15px 0; padding: 10px; background: #f0f8ff; border-radius: 5px;">
-      <label style="margin-right: 10px;">
-        Minutes before:
-        <input type="number" name="buffer_before" id="buffer_before" value="{{ buffer_before }}" style="width: 60px;">
-      </label>
-      <label>
-        Minutes after:
-        <input type="number" name="buffer_after" id="buffer_after" value="{{ buffer_after }}" style="width: 60px;">
-      </label>
-    </div>
+    <input type="hidden" name="buffer_before" value="{{ buffer_before }}">
+    <input type="hidden" name="buffer_after" value="{{ buffer_after }}">
 
     <div class="submission-log">
-      <strong>Submitted tickets (last 30 days)</strong>
+      <strong>Recently booked sessions (last {{ window_past_days }} days)</strong>
       {% if submitted_ticket_log %}
       <table>
         <thead>
@@ -286,11 +316,42 @@ document.addEventListener('DOMContentLoaded', function() {
       {% endif %}
     </div>
 
+    <div class="submission-log">
+      <strong>Conflicts (latest hourly scan)</strong>
+      {% if latest_conflicts %}
+      <table>
+        <thead>
+          <tr>
+            <th>Session</th>
+            <th>School</th>
+            <th>Session Time</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in latest_conflicts %}
+          <tr>
+            <td>{{ entry.title }}</td>
+            <td>{{ entry.school }}</td>
+            <td>
+              <span class="session-time" data-time="{{ entry.start_time or '' }}">{{ entry.start_time or 'Unknown' }}</span>
+            </td>
+            <td>{{ entry.conflict_details or 'Conflict detected' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="margin-top: 8px;">No conflicts found in the latest scan.</p>
+      {% endif %}
+    </div>
+
     <p>
       <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
     </p>
 
     <!-- Session Gallery Section -->
+    <h3>Current candidate sessions</h3>
     <div class="gallery">
       {% if all_sessions %}
         {% for session in all_sessions %}
