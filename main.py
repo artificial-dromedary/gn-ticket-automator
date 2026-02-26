@@ -382,7 +382,7 @@ def gn_ticket_page():
         submitted_ticket_log = ticket_log.get_entries(user['email'], window_past_days=window_past_days)
         submitted_ticket_log = sorted(submitted_ticket_log, key=lambda entry: entry.get('submitted_at', ''), reverse=True)
 
-        session['book_sessions'] = candidate_sessions
+        session['book_session_ids'] = [s.s_id for s in candidate_sessions]
 
         latest_conflicts = []
         with SessionLocal() as db:
@@ -424,7 +424,22 @@ def do_gn_ticket():
     user = session['user']
     profile = user_manager.load_profile(user['email'])
 
-    send_to_gn = [s for s in session.get('book_sessions', []) if s.s_id in get_enabled_sessions(request)]
+    prefs = profile.get('preferences', {})
+    window_past_days = prefs.get('window_past_days', 14)
+    window_future_days = prefs.get('window_future_days', 90)
+
+    selected_ids = set(get_enabled_sessions(request))
+    candidate_ids = set(session.get('book_session_ids', []))
+    effective_ids = selected_ids.intersection(candidate_ids) if candidate_ids else selected_ids
+
+    airtable_client = create_airtable_client(profile['airtable_api_key'])
+    candidate_sessions = airtable_client.get_booked_sessions(
+        user_email=user['email'],
+        window_past_days=window_past_days,
+        window_future_days=window_future_days,
+    )
+
+    send_to_gn = [s for s in candidate_sessions if s.s_id in effective_ids]
 
     progress_session_id = f"gn_booking_{int(time.time())}"
     clear_progress(progress_session_id)
