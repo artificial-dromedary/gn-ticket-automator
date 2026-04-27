@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+import concurrent.futures
+import os
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 import pyotp
 import difflib
@@ -24,13 +26,48 @@ from selenium.webdriver.common.alert import Alert
 
 from site_list import AVAILABLE_SITES
 
+# ---------------------------------------------------------------------------
+# Site cache — stores the live dropdown options scraped from ServiceNow
+# ---------------------------------------------------------------------------
+_SITE_CACHE_PATH = os.path.join(os.path.expanduser("~"), "GN_Ticket_Automator", "site_cache.json")
+_SITE_CACHE_MAX_AGE_DAYS = 30
+
+
+def load_site_cache():
+    """Return (sites_list, is_stale).  Falls back to AVAILABLE_SITES if missing/expired."""
+    try:
+        if os.path.exists(_SITE_CACHE_PATH):
+            with open(_SITE_CACHE_PATH, "r") as f:
+                data = json.load(f)
+            fetched = datetime.fromisoformat(data["fetched_at"])
+            age_days = (datetime.now() - fetched).days
+            if age_days < _SITE_CACHE_MAX_AGE_DAYS and data.get("sites"):
+                return data["sites"], False   # fresh
+    except Exception as e:
+        print(f"[site_cache] Could not read cache: {e}")
+    return list(AVAILABLE_SITES), True   # stale / missing
+
+
+def save_site_cache(sites):
+    """Persist scraped sites list to disk."""
+    try:
+        os.makedirs(os.path.dirname(_SITE_CACHE_PATH), exist_ok=True)
+        with open(_SITE_CACHE_PATH, "w") as f:
+            json.dump({"fetched_at": datetime.now().isoformat(), "sites": sites}, f, indent=2)
+        print(f"[site_cache] Saved {len(sites)} sites.")
+    except Exception as e:
+        print(f"[site_cache] Could not write cache: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Progress tracking function placeholder
+# ---------------------------------------------------------------------------
 set_progress_func = lambda *args, **kwargs: None
 
 
-def set_progress(session_id, message, step=None, total_steps=None, status="running"):
+def set_progress(session_id, message, step=None, total_steps=None, status="running", session_ref=None):
     """Placeholder progress reporter."""
-    set_progress_func(session_id, message, step, total_steps, status)
+    set_progress_func(session_id, message, step, total_steps, status, session_ref=session_ref)
 
 def generate_totp_token(secret):
     """Generate TOTP token using user's secret"""
@@ -122,58 +159,131 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
         pw_box = driver.find_element(By.ID, "user_password")
         pw_box.send_keys(pw)
         login_button = driver.find_element(By.ID, "sysverb_login")
-        login_button.click()
-        time.sleep(1)
+        driver.execute_script("arguments[0].click();", login_button)
 
-        set_progress(progress_session_id, "Generating 2FA token...", 4, 8)
+        set_progress(progress_session_id, "Waiting for 2FA page...", 4, 8)
 
-        # Generate 2FA token using user's TOTP secret
+        # ServiceNow shows the 2FA form on the same login.do page.
+        # Wait up to 20s for txtResponse to appear (main frame, then iframes).
+        input_box = None
+        try:
+            input_box = WebDriverWait(driver, 20).until(
+                expected_conditions.presence_of_element_located((By.ID, "txtResponse"))
+            )
+        except Exception:
+            driver.switch_to.default_content()
+
+        if not input_box:
+            for iframe in driver.find_elements(By.TAG_NAME, "iframe"):
+                try:
+                    driver.switch_to.frame(iframe)
+                    input_box = WebDriverWait(driver, 5).until(
+                        expected_conditions.presence_of_element_located((By.ID, "txtResponse"))
+                    )
+                    break
+                except Exception:
+                    driver.switch_to.default_content()
+
+        if not input_box:
+            # Check for credential error before reporting generic failure
+            error_text = ""
+            for el in driver.find_elements(By.CSS_SELECTOR, ".login_message, [id*='error'], [class*='error']"):
+                t = el.text.strip()
+                if t:
+                    error_text = t
+                    break
+            detail = f" ({error_text})" if error_text else ""
+            raise Exception(f"Could not locate 2FA input field{detail} — check credentials or app.log")
+
+        # Generate token at the last moment for maximum TOTP validity window
         token = generate_totp_token(totp_secret)
         print(f"Generated 2FA token: {token}")
 
         set_progress(progress_session_id, "Entering 2FA token...", 5, 8)
 
-        input_box = driver.find_element(By.ID, "txtResponse")
         input_box.send_keys(token)
         time.sleep(0.5)
         input_box.send_keys(Keys.ENTER)
+        driver.switch_to.default_content()
 
         set_progress(progress_session_id, "Waiting for login to complete...", 6, 8)
 
         ready = WebDriverWait(driver, 30).until(expected_conditions.url_to_be("https://nunavutprod.service-now.com/sp"))
 
-        set_progress(progress_session_id, "Login successful! Processing sessions...", 7, 8)
+        set_progress(progress_session_id, "Login successful! Preparing sessions...", 7, 8)
+
+        # ---------------------------------------------------------------
+        # Refresh site cache if stale, then pre-compute all site matches
+        # ---------------------------------------------------------------
+        live_sites, cache_stale = load_site_cache()
+        if cache_stale:
+            set_progress(progress_session_id, "Refreshing site list from ServiceNow (cache expired)...", 7, 8)
+            try:
+                driver.get("https://nunavutprod.service-now.com/sp/?id=sc_cat_item&sys_id=35083704dbe305908e611bad139619a5")
+                WebDriverWait(driver, 15).until(
+                    EC.element_to_be_clickable((By.ID, "s2id_sp_formfield_select_sites"))
+                )
+                fresh = get_all_dropdown_options_from_html(driver, "s2id_sp_formfield_select_sites")
+                if fresh:
+                    save_site_cache(fresh)
+                    live_sites = fresh
+                    set_progress(progress_session_id, f"Site list updated: {len(live_sites)} sites cached.", 7, 8)
+            except Exception as e:
+                print(f"[site_cache] Could not refresh: {e}")
+
+        set_progress(progress_session_id, "Matching sessions to sites...", 7, 8)
+        precomputed = {}
+        needs_gpt = []
+        for s in book_sessions:
+            m = basic_site_match(s.community.strip(), s.school.strip(), s.building.strip(),
+                                 all_site_options=live_sites)
+            if m:
+                precomputed[s.s_id] = m
+            else:
+                needs_gpt.append(s)
+
+        if needs_gpt and chatgpt_api_key:
+            set_progress(progress_session_id,
+                         f"Running ChatGPT matching for {len(needs_gpt)} session(s)...", 7, 8)
+            def _gpt_match(s):
+                community_lower = s.community.strip().lower()
+                filtered = [x for x in live_sites if community_lower in x.lower()]
+                opts = filtered if filtered else live_sites
+                return s.s_id, ask_chatgpt_for_best_match(opts, s.community, s.school, chatgpt_api_key)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as gpt_pool:
+                for sid, match in gpt_pool.map(_gpt_match, needs_gpt):
+                    if match:
+                        precomputed[sid] = match
+
+        set_progress(progress_session_id,
+                     f"Site matching: {len(precomputed)}/{len(book_sessions)} matched. Starting booking...", 7, 8)
 
         # Track results with more detail
         successful_sessions = []
         failed_sessions = []
-        warning_sessions = []
 
         # Process each session
         for cn_session in book_sessions:
             current_session += 1
             session_progress_msg = f"Processing session {current_session}/{total_sessions}: {cn_session.title}"
-            set_progress(progress_session_id, session_progress_msg, 8, 8, "running")
+            set_progress(progress_session_id, session_progress_msg, 8, 8, "running",
+                         session_ref=cn_session.s_id)
 
             print("Processing", cn_session.title, "at", cn_session.school)
 
             try:
                 # Verify Zoom meeting exists in Airtable
-                set_progress(progress_session_id, f"Checking Zoom meeting for {cn_session.title}...", 8, 8, "running")
                 zoom_check_result = check_zoom_meeting(cn_session, airtable_api_key)
 
                 if not zoom_check_result:
-                    set_progress(progress_session_id, f"⚠️  No Zoom link found for {cn_session.title}", 8, 8, "running")
-                    warning_sessions.append({
-                        'title': cn_session.title,
-                        'reason': 'No Zoom link found'
-                    })
+                    set_progress(progress_session_id, "No Zoom link found", 8, 8, "zoom_warning",
+                                 session_ref=cn_session.s_id)
+                    raise Exception("No Zoom link found — session skipped")
                 else:
-                    set_progress(progress_session_id, f"✅ Zoom meeting confirmed for {cn_session.title}", 8, 8,
-                                 "running")
+                    set_progress(progress_session_id, "Zoom confirmed", 8, 8, "zoom_ok",
+                                 session_ref=cn_session.s_id)
 
                 # Submit GN ticket
-                set_progress(progress_session_id, f"Starting GN ticket for {cn_session.title}...", 8, 8, "running")
                 ticket_result = do_gn_ticket(
                     driver,
                     cn_session,
@@ -186,11 +296,14 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                     chatgpt_api_key,
                     allow_manual_site_selection,
                     headless_mode,
+                    precomputed_site=precomputed.get(cn_session.s_id),
+                    live_sites=live_sites,
                 )
 
                 # Mark as successfully requested in Airtable
                 set_airtable_field(cn_session, "GN Ticket Requested", True, airtable_api_key)
 
+                ticket_id = ticket_result.get('ticket_id', 'Unknown')
                 successful_sessions.append({
                     'session_id': cn_session.s_id,
                     'title': cn_session.title,
@@ -198,9 +311,8 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                     'teacher': cn_session.teacher,
                     'start_time': cn_session.start_time.isoformat() if cn_session.start_time else None,
                     'length': cn_session.length,
-                    'ticket_id': ticket_result.get('ticket_id', 'Unknown')
+                    'ticket_id': ticket_id,
                 })
-                set_progress(progress_session_id, f"✅ Completed {cn_session.title}", 8, 8, "session-complete")
 
             except Exception as e:
                 error_msg = f"❌ Error processing {cn_session.title}: {str(e)}"
@@ -208,20 +320,17 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                     'title': cn_session.title,
                     'error': str(e)
                 })
-                set_progress(progress_session_id, error_msg, 8, 8, "error session-complete")
+                set_progress(progress_session_id, str(e), 8, 8, "session-failed",
+                             session_ref=cn_session.s_id)
                 print(f"Error processing {cn_session.title}: {repr(e)}")
 
         # Create detailed completion message
-        total_processed = len(successful_sessions) + len(failed_sessions) + len(warning_sessions)
+        total_processed = len(successful_sessions) + len(failed_sessions)
         completion_msg = f"Processing complete! {len(successful_sessions)} successful"
 
         if failed_sessions:
             failed_titles = [s['title'] for s in failed_sessions]
             completion_msg += f", {len(failed_sessions)} failed ({', '.join(failed_titles)})"
-
-        if warning_sessions:
-            warning_titles = [s['title'] for s in warning_sessions]
-            completion_msg += f", {len(warning_sessions)} with warnings ({', '.join(warning_titles)})"
 
         completion_msg += f". Total: {total_processed} sessions."
 
@@ -240,15 +349,13 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
         }
     finally:
         if not headless_mode:
-            # Give user time to see the final result before closing
             time.sleep(3)
         driver.quit()
 
-    # Return detailed results
     return {
         'successful_sessions': successful_sessions,
         'failed_sessions': failed_sessions,
-        'warning_sessions': warning_sessions
+        'warning_sessions': [],
     }
 
 
@@ -458,55 +565,60 @@ def get_valid_options(options):
 def try_dropdown_selection(driver, element_id, text, wait_time):
     """Select an option from a ServiceNow select2 dropdown.
 
-    This implementation falls back to the simpler approach used in the
-    original version of the script which proved to be more reliable.  The
-    element is brought into view, clicked, and then the active element is used
-    to type the desired text and confirm with ENTER.
-
-    Args:
-        driver: Active Selenium WebDriver instance.
-        element_id: ID attribute of the select2 container to interact with.
-        text: Text to search for within the dropdown.
-        wait_time: Seconds to wait between interactions.
+    Uses reduced sleep times and retries up to 3 times (1 s apart) before
+    giving up, so that a briefly-slow page doesn't fail a session.
     """
-    try:
-        dropdown_container = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.ID, element_id))
-        )
-        driver.execute_script(
-            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-            dropdown_container,
-        )
-        time.sleep(wait_time)
+    _SCROLL_S   = 0.5   # after scrollIntoView
+    _CLICK_S    = 0.8   # after opening the dropdown
+    _FILTER_S   = 1.5   # after typing the search text
+    _SELECT_S   = 0.5   # after pressing ENTER
+    _RETRY_WAIT = 1.0
+    _MAX_RETRIES = 3
 
+    last_exc = None
+    for attempt in range(_MAX_RETRIES + 1):
         try:
-            dropdown_container.click()
-        except (ElementClickInterceptedException, StaleElementReferenceException):
-            driver.execute_script("arguments[0].click();", dropdown_container)
-        time.sleep(wait_time)
+            dropdown_container = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, element_id))
+            )
+            driver.execute_script(
+                "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                dropdown_container,
+            )
+            time.sleep(_SCROLL_S)
 
-        active_element = driver.switch_to.active_element
-        active_element.send_keys(text)
-        time.sleep(wait_time * 2)
-        active_element.send_keys(Keys.ENTER)
-        time.sleep(wait_time)
-        return True
-    except Exception as e:
-        set_progress_func(
-            None,
-            f"DEBUG SITE: Dropdown selection failed for '{text}' in {element_id}: {e}",
-            None,
-            None,
-            "error",
-        )
-        print(f"Dropdown selection failed for '{text}': {e}")
-        return False
-    finally:
-        # Ensure dropdown is closed before moving on
-        try:
-            driver.switch_to.active_element.send_keys(Keys.ESCAPE)
-        except Exception:
-            pass
+            try:
+                dropdown_container.click()
+            except (ElementClickInterceptedException, StaleElementReferenceException):
+                driver.execute_script("arguments[0].click();", dropdown_container)
+            time.sleep(_CLICK_S)
+
+            active_element = driver.switch_to.active_element
+            active_element.send_keys(text)
+            time.sleep(_FILTER_S)
+            active_element.send_keys(Keys.ENTER)
+            time.sleep(_SELECT_S)
+            return True
+
+        except Exception as e:
+            last_exc = e
+            # Close any open dropdown before retry
+            try:
+                driver.switch_to.active_element.send_keys(Keys.ESCAPE)
+            except Exception:
+                pass
+            if attempt < _MAX_RETRIES:
+                print(f"Dropdown attempt {attempt + 1} failed for '{text}' in {element_id}: {e}. Retrying...")
+                time.sleep(_RETRY_WAIT)
+            else:
+                set_progress_func(
+                    None,
+                    f"DEBUG SITE: Dropdown selection failed for '{text}' in {element_id}: {last_exc}",
+                    None, None, "error",
+                )
+                print(f"Dropdown selection failed for '{text}': {last_exc}")
+                return False
+    return False
 
 
 def get_first_word(text):
@@ -607,23 +719,38 @@ def basic_site_match(community, school, building, all_site_options=AVAILABLE_SIT
 
 
 def smart_site_selection(driver, cn_session, wait_time=1.5, progress_session_id=None, chatgpt_api_key=None,
-                         allow_manual_selection=False, headless_mode=True):
-    """Intelligently select the site field using quick heuristics and ChatGPT fallback."""
+                         allow_manual_selection=False, headless_mode=True, precomputed_site=None,
+                         live_sites=None):
+    """Intelligently select the site field using quick heuristics and ChatGPT fallback.
+
+    If precomputed_site is provided it is tried first, skipping heuristic/ChatGPT lookup.
+    live_sites, if provided, is used instead of the global AVAILABLE_SITES for matching.
+    """
     element_id = "s2id_sp_formfield_select_sites"
+    site_options = live_sites if live_sites else AVAILABLE_SITES
+
+    # Use pre-computed match if available
+    if precomputed_site:
+        set_progress_func(progress_session_id,
+                          f"DEBUG SITE: Using pre-computed match '{precomputed_site}'.", None, None)
+        if try_dropdown_selection(driver, element_id, precomputed_site, wait_time):
+            return precomputed_site   # return the matched name so caller can surface it
+        set_progress_func(progress_session_id,
+                          f"DEBUG SITE: Pre-computed match failed in browser, falling back.", None, None, "warning")
 
     set_progress_func(progress_session_id,
                       f"DEBUG SITE: Starting smart site selection for '{cn_session.school}' in '{cn_session.community}'",
                       None, None)
 
     quick_match = basic_site_match(cn_session.community.strip(), cn_session.school.strip(),
-                                   cn_session.building.strip())
+                                   cn_session.building.strip(), all_site_options=site_options)
     if quick_match:
         set_progress_func(progress_session_id,
                           f"DEBUG SITE: Quick match found '{quick_match}'. Attempting selection...", None, None)
         if try_dropdown_selection(driver, element_id, quick_match, wait_time):
             set_progress_func(progress_session_id,
                               f"DEBUG SITE: Successfully selected '{quick_match}'.", None, None)
-            return True
+            return quick_match
         else:
             set_progress_func(progress_session_id,
                               f"DEBUG SITE: Failed to select quick match '{quick_match}'.", None, None, "warning")
@@ -633,8 +760,8 @@ def smart_site_selection(driver, cn_session, wait_time=1.5, progress_session_id=
 
     if chatgpt_api_key:
         community_lower = cn_session.community.strip().lower()
-        community_filtered = [s for s in AVAILABLE_SITES if community_lower in s.lower()]
-        target_options = community_filtered if community_filtered else AVAILABLE_SITES
+        community_filtered = [s for s in site_options if community_lower in s.lower()]
+        target_options = community_filtered if community_filtered else site_options
         best_match = ask_chatgpt_for_best_match(target_options, cn_session.community, cn_session.school, chatgpt_api_key)
         if best_match:
             set_progress_func(progress_session_id,
@@ -642,7 +769,7 @@ def smart_site_selection(driver, cn_session, wait_time=1.5, progress_session_id=
             if try_dropdown_selection(driver, element_id, best_match, wait_time):
                 set_progress_func(progress_session_id,
                                   f"DEBUG SITE: Successfully selected ChatGPT's suggestion: '{best_match}'.", None, None)
-                return True
+                return best_match
             else:
                 set_progress_func(progress_session_id,
                                   f"DEBUG SITE: Failed to select ChatGPT's suggestion: '{best_match}'.", None, None, "warning")
@@ -678,7 +805,7 @@ def smart_site_selection(driver, cn_session, wait_time=1.5, progress_session_id=
         elif try_dropdown_selection(driver, element_id, manual_site_input, wait_time):
             set_progress_func(progress_session_id, f"User manually selected '{manual_site_input}'.", None, None,
                               "completed")
-            return True
+            return manual_site_input
         else:
             set_progress_func(progress_session_id,
                               f"DEBUG SITE: Manual selection of '{manual_site_input}' failed. Proceeding to final fallback.",
@@ -734,19 +861,26 @@ def set_airtable_field(item, field, content, api_key):
 
 def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_after=10,
                  progress_session_id=None, api_key=None, chatgpt_api_key=None,
-                 allow_manual_site_selection=False, headless_mode=True):
+                 allow_manual_site_selection=False, headless_mode=True,
+                 precomputed_site=None, live_sites=None):
     """Fill and submit the GN ticket form for a single session."""
     wait_time = 1.5
+    s_ref = cn_session.s_id   # shorthand for session_ref
 
-    set_progress(progress_session_id, f"Loading GN ticket form for {cn_session.title}...", None, None)
+    set_progress(progress_session_id, f"Loading GN ticket form for {cn_session.title}...", None, None,
+                 session_ref=s_ref)
 
     try:
         driver.get("https://nunavutprod.service-now.com/sp/?id=sc_cat_item&sys_id=35083704dbe305908e611bad139619a5")
-        time.sleep(wait_time * 2)
-    except Exception as e:
-        alert = Alert(driver)
-        if alert:
-            alert.accept()
+    except Exception:
+        try:
+            Alert(driver).accept()
+        except Exception:
+            pass
+    # Wait for the first dropdown to be ready instead of a bare sleep
+    WebDriverWait(driver, 15).until(
+        EC.element_to_be_clickable((By.ID, "s2id_sp_formfield_select_your_department"))
+    )
 
     gn_form = driver.find_element(By.TAG_NAME, "body")
 
@@ -853,15 +987,19 @@ def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_afte
     # Site - Use smart selection with ChatGPT fallback, and potentially manual intervention
     set_progress(
         progress_session_id,
-        f"Setting site information for {cn_session.title} with smart matching (and manual fallback if enabled)...",
-        None,
-        None,
+        f"Setting site information for {cn_session.title}...",
+        None, None, session_ref=s_ref,
     )
-    success = smart_site_selection(driver, cn_session, wait_time, progress_session_id, chatgpt_api_key,
-                                   allow_manual_site_selection, headless_mode)
-    if not success:
+    matched_site = smart_site_selection(
+        driver, cn_session, wait_time, progress_session_id, chatgpt_api_key,
+        allow_manual_site_selection, headless_mode,
+        precomputed_site=precomputed_site, live_sites=live_sites,
+    )
+    if not matched_site:
         raise Exception(
             f"Failed to set site for {cn_session.title} - all selection methods failed (including manual if enabled).")
+    set_progress(progress_session_id, f"Site: {matched_site}", None, None,
+                 status="site_found", session_ref=s_ref)
 
     # Connection Details
     set_progress(progress_session_id, f"Setting connection details for {cn_session.title}...", None, None)
@@ -871,19 +1009,10 @@ def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_afte
     element = driver.switch_to.active_element
     element.clear()
 
-    try:
-        zoom_digits = get_zoom_digits(cn_session, api_key)
-        if zoom_digits:
-            element.send_keys(zoom_digits + "@zoomcrc.com")
-            set_progress(progress_session_id, f"✅ Added Zoom connection details for {cn_session.title}", None, None)
-        else:
-            element.send_keys("No Zoom meeting found - please add manually")
-            set_progress(progress_session_id,
-                         f"⚠️ No Zoom meeting found for {cn_session.title} - manual input required", None, None)
-    except Exception as e:
-        element.send_keys("Error retrieving Zoom details - please add manually")
-        set_progress(progress_session_id, f"⚠️ Error retrieving Zoom details for {cn_session.title}: {str(e)}", None,
-                     None)
+    zoom_digits = get_zoom_digits(cn_session, api_key)
+    if not zoom_digits:
+        raise Exception("No Zoom connection details found — session skipped")
+    element.send_keys(zoom_digits + "@zoomcrc.com")
 
     time.sleep(wait_time)
     element.send_keys(Keys.ENTER)
@@ -892,29 +1021,29 @@ def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_afte
     # Submit
     set_progress(progress_session_id, f"Submitting ticket for {cn_session.title}...", None, None)
     submit_btn = driver.find_element(By.ID, "submit-btn")
-    driver.execute_script("arguments[0].scrollIntoView(true);", submit_btn)  # Scroll to element before interacting
+    driver.execute_script("arguments[0].scrollIntoView(true);", submit_btn)
     submit_btn.click()
-    time.sleep(wait_time * 3)
+    time.sleep(0.5)   # brief pause then let WebDriverWait handle the redirect
 
     WebDriverWait(driver, 30).until(expected_conditions.url_contains("&table=sc_request"))
 
-    set_progress(progress_session_id, f"✅ Ticket submitted successfully for {cn_session.title}", None, None)
-    set_airtable_field(cn_session, "GN Ticket Requested", True, api_key)  # Always mark as requested if we reach here
+    set_airtable_field(cn_session, "GN Ticket Requested", True, api_key)
 
-    ticket_id = ""  # Initialize ticket_id here to ensure it's always defined
+    ticket_id = ""
     try:
         req_number_element = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'text-muted') and contains(.,'Request Number')]//b"))
         )
         ticket_id = req_number_element.text.strip()
         print("req number:", ticket_id)
-        # Append the ticket ID to existing GN Ticket ID field
         current_gn_ticket_id = cn_session.gn_ticket_id if cn_session.gn_ticket_id else ""
         set_airtable_field(cn_session, "GN Ticket ID", f"{current_gn_ticket_id} #gn-submitted {ticket_id}".strip(), api_key)
-        set_progress(progress_session_id, f"✅ Ticket {ticket_id} created for {cn_session.title}", None, None)
     except Exception as e:
         print(f"Could not retrieve ticket ID: {e}")
         ticket_id = "Unknown"
+
+    set_progress(progress_session_id, ticket_id or "submitted", None, None,
+                 status="session-complete", session_ref=s_ref)
 
     return {"status": "success", "ticket_id": ticket_id}
 

@@ -2,368 +2,417 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GN Ticket Progress</title>
 <link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
-<style type="text/css">
+<style>
+/* ---- Layout ---- */
 .progress-container {
-    width: 90%;
-    margin: 20px auto;
-    padding: 20px;
-    background: #f9f9f9;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  width: 92%;
+  max-width: 1100px;
+  margin: 24px auto;
 }
 
-.progress-bar {
-    width: 100%;
-    height: 30px;
-    background-color: #e0e0e0;
-    border-radius: 15px;
-    overflow: hidden;
-    margin: 20px 0;
+/* ---- Header bar ---- */
+.progress-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
 }
-
-.progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #6DC7D0, #52BAD5);
-    width: 0%;
-    transition: width 0.5s ease;
-    border-radius: 15px;
-}
-
-.progress-text {
-    text-align: center;
-    margin: 10px 0;
-    font-weight: bold;
-    color: #5D5E5D;
-}
-
-.log-container {
-    max-height: 400px;
-    overflow-y: auto;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 15px;
-    background: white;
-    font-family: monospace;
-    font-size: 14px;
-}
-
-.log-entry {
-    margin: 5px 0;
-    padding: 8px;
-    border-radius: 3px;
-    border-left: 4px solid #6DC7D0;
-    background: #f8f9fa;
-    animation: slideDown 0.3s ease-in;
-    transition: background-color 0.5s ease;
-}
-
-/* --- Style for the currently active task --- */
-.log-entry.active {
-    border-left-color: #52BAD5;
-    animation: slideDown 0.3s ease-in, pulse 2s infinite;
-}
-
-/* --- Pulsing animation to show the active task --- */
-@keyframes pulse {
-    0% {
-        background-color: #f0f7f8;
-    }
-    50% {
-        background-color: #e3f2f4;
-    }
-    100% {
-        background-color: #f0f7f8;
-    }
-}
-
-/* Animate new entries sliding in */
-@keyframes slideDown {
-    from {
-        opacity: 0;
-        transform: translateY(-20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.log-entry.error {
-    border-left-color: #dc3545;
-    background: #f8d7da;
-    color: #721c24;
-    animation: slideDown 0.3s ease-in; /* Override pulse on error */
-}
-
-.log-entry.completed {
-    border-left-color: #28a745;
-    background: #d4edda;
-    color: #155724;
-    animation: slideDown 0.3s ease-in; /* Override pulse on complete */
-}
-
-.timestamp {
-    color: #666;
-    font-size: 12px;
-    margin-right: 10px;
-}
-
+.progress-header h2 { margin: 0; color: #5D5E5D; }
 .spinner {
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #6DC7D0;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    animation: spin 2s linear infinite;
-    margin: 20px auto;
-    display: block;
+  border: 3px solid #e0e0e0;
+  border-top: 3px solid #6DC7D0;
+  border-radius: 50%;
+  width: 28px; height: 28px;
+  animation: spin 1.2s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.status-banner {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 6px;
+  display: none;
+}
+.status-banner.success { background: #d4edda; color: #155724; display: block; }
+.status-banner.error   { background: #f8d7da; color: #721c24; display: block; }
+
+/* ---- Session cards ---- */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
 }
 
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+.session-card {
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #fffde7;   /* pending = pale yellow */
+  transition: background 0.4s ease, border-color 0.4s ease;
+}
+.session-card.card-active {
+  background: #e8f5e9;
+  border-color: #81c784;
+}
+.session-card.card-done {
+  background: #f5f5f5;
+  border-color: #bdbdbd;
+  opacity: 0.85;
+}
+.session-card.card-failed {
+  background: #fff3f3;
+  border-color: #e57373;
 }
 
-.status-complete {
-    color: #28a745;
-    font-size: 18px;
-    font-weight: bold;
-    text-align: center;
-    margin: 20px 0;
+.card-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.card-school {
+  font-size: 12px;
+  color: #777;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-time {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-steps { list-style: none; margin: 0; padding: 0; }
+.card-steps li {
+  font-size: 13px;
+  color: #555;
+  padding: 3px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.step-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+.step-text { flex: 1; }
 
-.status-error {
-    color: #dc3545;
-    font-size: 18px;
-    font-weight: bold;
-    text-align: center;
-    margin: 20px 0;
+/* ---- Previously Booked Log ---- */
+.log-section { margin-top: 8px; }
+.log-section h3 {
+  font-size: 15px;
+  color: #5D5E5D;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 6px;
+}
+.log-table-wrapper {
+  max-height: 270px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+}
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.log-table th {
+  background: #f5f5f5;
+  padding: 7px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: #555;
+  position: sticky;
+  top: 0;
+}
+.log-table td {
+  padding: 6px 10px;
+  border-top: 1px solid #f0f0f0;
+  color: #444;
+}
+.log-table tr:hover td { background: #fafafa; }
+.req-badge {
+  display: inline-block;
+  background: #e3f2fd;
+  color: #1565c0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 600;
+  font-size: 12px;
 }
 
 .back-button {
-    background: #6DC7D0;
-    color: white;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 16px;
-    margin: 20px 10px;
-    text-decoration: none;
-    display: inline-block;
+  background: #6DC7D0; color: white;
+  padding: 9px 20px; border: none;
+  border-radius: 5px; cursor: pointer;
+  font-size: 14px; margin: 4px 6px 4px 0;
+  text-decoration: none; display: inline-block;
 }
-
-.back-button:hover {
-    background: #52BAD5;
-}
+.back-button:hover { background: #52BAD5; }
 </style>
 </head>
 <body>
-<!-- Main Container -->
-<div class="container"> 
-  <!-- Header -->
+<div class="container">
   <header class="header">
     <h4 class="logo">GN Ticket Booking Progress</h4>
-    <div style="text-align: center; padding: 10px;">
-      <span style="color: white;">{{ user.name }}</span>
-      <a href="/logout" style="color: white; margin-left: 20px;">Logout</a>
+    <div style="text-align:center;padding:10px;">
+      <span style="color:white;">{{ user.name }}</span>
+      <a href="/logout" style="color:white;margin-left:20px;">Logout</a>
     </div>
   </header>
-  
+
   <div class="progress-container">
-    <h2>Processing <span id="remainingSessions">{{ session_count }}</span> session(s)...</h2>
-    
-    <!-- Progress Bar -->
-    <div class="progress-bar">
-      <div class="progress-fill" id="progressFill"></div>
+
+    <!-- Header bar -->
+    <div class="progress-header">
+      <div class="spinner" id="spinner"></div>
+      <h2 id="headingText">Booking <span id="remainingSessions">{{ session_count }}</span> session(s)…</h2>
+      <div class="status-banner" id="statusBanner"></div>
     </div>
-    <div class="progress-text" id="progressText">Initializing...</div>
-    
-    <!-- Spinner (hidden when complete) -->
-    <div class="spinner" id="spinner"></div>
-    
-    <!-- Status Messages -->
-    <div id="statusMessage"></div>
-    
-    <!-- Progress Log -->
-    <h3>Progress Log:</h3>
-    <div class="log-container" id="logContainer">
-      <!-- Initial entry will be at top; new events will append below -->
-      <div class="log-entry" id="initialEntry">
-        <span class="timestamp">--:--:--</span>
-        Initializing booking process...
+
+    <!-- Session cards -->
+    <div class="cards-grid" id="cardsGrid">
+      {% for s in sessions %}
+      <div class="session-card" id="card-{{ s.s_id }}" data-sid="{{ s.s_id }}">
+        <div class="card-title" title="{{ s.title }}">{{ s.title }}</div>
+        <div class="card-school">{{ s.school }}</div>
+        <div class="card-time" data-iso="{{ s.start_time_iso }}">{{ s.start_time_iso }}</div>
+        <ul class="card-steps">
+          <li id="step-zoom-{{ s.s_id }}">
+            <span class="step-icon">○</span>
+            <span class="step-text">Zoom</span>
+          </li>
+          <li id="step-site-{{ s.s_id }}">
+            <span class="step-icon">○</span>
+            <span class="step-text">Site</span>
+          </li>
+          <li id="step-done-{{ s.s_id }}">
+            <span class="step-icon">○</span>
+            <span class="step-text">Complete</span>
+          </li>
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Navigation -->
+    <div style="margin-bottom:28px;">
+      <a href="/gn_ticket" class="back-button">← Back to Sessions</a>
+      <button class="back-button" onclick="refreshProgress()">Refresh Status</button>
+    </div>
+
+    <!-- Previously Booked Log -->
+    <div class="log-section">
+      <h3>Previously Booked Sessions</h3>
+      <div class="log-table-wrapper">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>REQ #</th>
+              <th>Session</th>
+              <th>School</th>
+              <th>Session date/time</th>
+              <th>Date/time submitted</th>
+            </tr>
+          </thead>
+          <tbody id="logBody">
+            {% for entry in submitted_ticket_log %}
+            <tr>
+              <td><span class="req-badge">{{ entry.ticket_id or '—' }}</span></td>
+              <td>{{ entry.title or '—' }}</td>
+              <td>{{ entry.school or '—' }}</td>
+              <td class="log-session-time" data-iso="{{ entry.start_time or '' }}">{{ entry.start_time or '—' }}</td>
+              <td class="log-submitted-time" data-iso="{{ entry.submitted_at or '' }}">{{ entry.submitted_at[:16] if entry.submitted_at else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
-    
-    <!-- Navigation Buttons -->
-    <div style="text-align: center; margin-top: 30px;">
-      <a href="/gn_ticket" class="back-button">← Back to Sessions</a>
-      <button class="back-button" onclick="refreshProgress()" id="refreshBtn">Refresh Status</button>
-    </div>
-  </div>
-</div>
+
+  </div><!-- /.progress-container -->
+</div><!-- /.container -->
 
 <script>
 const progressSessionId = "{{ progress_session_id }}";
 const sessionCount = {{ session_count }};
+// Map from s_id → session data for live log rows
+const sessionMap = {};
+{% for s in sessions %}
+sessionMap["{{ s.s_id }}"] = { title: {{ s.title | tojson }}, school: {{ s.school | tojson }}, start_time_iso: {{ s.start_time_iso | tojson }} };
+{% endfor %}
 let remainingSessions = sessionCount;
+let completedCount = 0;
 let eventSource = null;
 let isComplete = false;
-let lastSeq = 0; // Track last processed sequence
+let lastSeq = 0;
 
-function startProgressStream() {
-    if (eventSource) {
-        eventSource.close();
-    }
-    
-    eventSource = new EventSource(`/progress/${progressSessionId}`);
-    
-    eventSource.onmessage = function(event) {
-        try {
-            const data = JSON.parse(event.data);
-            updateWithNewEntry(data);
-        } catch (e) {
-            console.error('Error parsing progress data:', e);
-        }
-    };
+/* ---------- card helpers ---------- */
+function getCard(sid) { return document.getElementById('card-' + sid); }
 
-    eventSource.onerror = function(event) {
-        console.error('EventSource failed:', event);
-        if (!isComplete) {
-            // Try to reconnect after 2 seconds
-            setTimeout(startProgressStream, 2000);
-        }
-    };
+function setCardState(sid, state) {
+  const card = getCard(sid);
+  if (!card) return;
+  card.classList.remove('card-active', 'card-done', 'card-failed');
+  if (state) card.classList.add(state);
 }
 
-function updateWithNewEntry(entry, skipCountdown = false, skipLog = false) {
-    const logContainer = document.getElementById('logContainer');
-    const progressFill = document.getElementById('progressFill');
-    const progressText = document.getElementById('progressText');
-    const spinner = document.getElementById('spinner');
-    const statusMessage = document.getElementById('statusMessage');
-    const remainingSpan = document.getElementById('remainingSessions');
+function setStep(sid, step, icon, text, color) {
+  const el = document.getElementById('step-' + step + '-' + sid);
+  if (!el) return;
+  el.querySelector('.step-icon').textContent = icon;
+  el.querySelector('.step-text').textContent = text;
+  if (color) el.style.color = color;
+}
 
-    if (entry.seq !== undefined && entry.seq <= lastSeq) {
-        return; // Already processed
+/* ---------- SSE event handler ---------- */
+function handleEvent(entry) {
+  if (entry.seq !== undefined) {
+    if (entry.seq <= lastSeq) return;
+    lastSeq = entry.seq;
+  }
+
+  const sid    = entry.session_ref;
+  const status = entry.status || '';
+  const msg    = entry.message || '';
+
+  // Per-session card updates
+  if (sid) {
+    if (status === 'running' || status === 'session-active') {
+      setCardState(sid, 'card-active');
     }
-
-    if (!skipLog) {
-        // Remove active class from previous entry
-        const previousActive = logContainer.querySelector('.log-entry.active');
-        if (previousActive) {
-            previousActive.classList.remove('active');
-        }
-
-        // Create new log entry
-        const logEntry = document.createElement('div');
-        logEntry.className = `log-entry ${entry.status}`;
-        logEntry.innerHTML = `
-            <span class="timestamp">${entry.timestamp}</span>
-            ${entry.message}
-        `;
-        
-        // Make the new entry active
-        logEntry.classList.add('active');
-        
-        // Append to bottom (chronological order)
-        logContainer.appendChild(logEntry);
-
-        // Auto-scroll to show the latest entry
-        logContainer.scrollTop = logContainer.scrollHeight;
+    if (status === 'zoom_ok') {
+      setStep(sid, 'zoom', '✓', 'Zoom confirmed', '#2e7d32');
     }
+    if (status === 'zoom_warning') {
+      setStep(sid, 'zoom', '⚠', 'No Zoom link', '#e65100');
+    }
+    if (status === 'site_found') {
+      setStep(sid, 'site', '✓', msg || 'Site found', '#2e7d32');
+    }
+    if (status === 'session-complete') {
+      const reqLabel = msg && msg !== 'submitted' ? msg : 'Submitted';
+      setStep(sid, 'done', '✓', reqLabel, '#2e7d32');
+      setCardState(sid, 'card-done');
+      completedCount++;
+      remainingSessions = Math.max(remainingSessions - 1, 0);
+      document.getElementById('remainingSessions').textContent = remainingSessions;
+      // Append to log table
+      appendLogRow(entry);
+    }
+    if (status === 'session-failed') {
+      setStep(sid, 'done', '✗', 'Failed', '#c62828');
+      setCardState(sid, 'card-failed');
+      completedCount++;
+      remainingSessions = Math.max(remainingSessions - 1, 0);
+      document.getElementById('remainingSessions').textContent = remainingSessions;
+    }
+  }
 
-    // Update progress bar
-    if (entry.step && entry.total_steps) {
-        const percentage = (entry.step / entry.total_steps) * 100;
-        progressFill.style.width = percentage + '%';
-        progressText.textContent = `Step ${entry.step} of ${entry.total_steps}`;
+  // Global completion / error
+  const isTerminalError = status.includes('error') && !status.includes('session');
+  const isDone = status.includes('completed');
+  if (isDone || isTerminalError) {
+    isComplete = true;
+    document.getElementById('spinner').style.display = 'none';
+    const banner = document.getElementById('statusBanner');
+    if (isDone && !isTerminalError) {
+      banner.className = 'status-banner success';
+      banner.textContent = '✓ All done! ' + completedCount + ' session(s) processed.';
+      document.getElementById('headingText').textContent = 'Booking complete';
     } else {
-        progressText.textContent = entry.message;
+      banner.className = 'status-banner error';
+      banner.textContent = '✗ ' + msg;
+      document.getElementById('headingText').textContent = 'Booking error';
     }
-
-    // Update session countdown
-    if (!skipCountdown && entry.status && entry.status.includes('session-complete')) {
-        remainingSessions = Math.max(remainingSessions - 1, 0);
-        remainingSpan.textContent = remainingSessions;
-    }
-
-    // Handle completion or terminal error state
-    const isTerminalError = entry.status && entry.status.includes('error') && !entry.status.includes('session-complete');
-    const isCompleted = entry.status && entry.status.includes('completed');
-    if (isCompleted || isTerminalError) {
-        isComplete = true;
-        progressFill.style.width = '100%';
-        spinner.style.display = 'none';
-
-        const activeEntry = logContainer.querySelector('.log-entry.active');
-        if (activeEntry) {
-            activeEntry.classList.remove('active');
-        }
-
-        if (isCompleted && !isTerminalError) {
-            statusMessage.innerHTML = '<div class="status-complete">✓ Booking process completed successfully!</div>';
-        } else {
-            statusMessage.innerHTML = '<div class="status-error">✗ An error occurred during the booking process.</div>';
-        }
-
-        eventSource.close();
-    }
-
-    if (entry.seq !== undefined) {
-        lastSeq = entry.seq;
-    }
+    if (eventSource) eventSource.close();
+  }
 }
 
+/* ---------- add row to "previously booked" table ---------- */
+function appendLogRow(entry) {
+  const tbody = document.getElementById('logBody');
+  const tr = document.createElement('tr');
+  const reqLabel = entry.message && entry.message !== 'submitted' ? entry.message : '—';
+  const sess = sessionMap[entry.session_ref] || {};
+  const sessionTimeStr = sess.start_time_iso ? formatLocalTime(sess.start_time_iso) : '—';
+  tr.innerHTML =
+    '<td><span class="req-badge">' + reqLabel + '</span></td>' +
+    '<td>' + (sess.title || '—') + '</td>' +
+    '<td>' + (sess.school || '—') + '</td>' +
+    '<td>' + sessionTimeStr + '</td>' +
+    '<td>' + entry.timestamp + '</td>';
+  tbody.insertBefore(tr, tbody.firstChild);  // newest on top
+}
+
+/* ---------- SSE stream ---------- */
+function startStream() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/progress/' + progressSessionId);
+  eventSource.onmessage = function(e) {
+    try { handleEvent(JSON.parse(e.data)); }
+    catch(err) { console.error('Parse error:', err); }
+  };
+  eventSource.onerror = function() {
+    if (!isComplete) setTimeout(startStream, 2000);
+  };
+}
+
+/* ---------- manual refresh ---------- */
 function refreshProgress() {
-    fetch(`/progress-status/${progressSessionId}?lastSeq=${lastSeq}`)
-        .then(response => response.json())
-        .then(data => {
-            if (!data || !data.entries) return;
-
-            const logContainer = document.getElementById('logContainer');
-
-            if (data.reset) {
-                logContainer.innerHTML = '';
-                remainingSessions = sessionCount;
-                document.getElementById('remainingSessions').textContent = remainingSessions;
-                lastSeq = 0;
-            }
-
-            data.entries.forEach(entry => {
-                updateWithNewEntry(entry);
-            });
-
-            logContainer.scrollTop = logContainer.scrollHeight;
-        })
-        .catch(error => {
-            console.error('Error fetching progress:', error);
-        });
+  fetch('/progress-status/' + progressSessionId + '?lastSeq=' + lastSeq)
+    .then(r => r.json())
+    .then(data => {
+      if (!data || !data.entries) return;
+      if (data.reset) { lastSeq = 0; }
+      data.entries.forEach(handleEvent);
+    })
+    .catch(console.error);
 }
 
-// Start the progress stream when page loads
+function formatLocalTime(isoString) {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const formatted = new Intl.DateTimeFormat('en-CA', {
+      weekday: 'short', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+      timeZone: tz, timeZoneName: 'short'
+    }).format(d);
+    return formatted;
+  } catch(e) { return isoString; }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    startProgressStream();
+  // Format all card times in browser local timezone
+  document.querySelectorAll('.card-time[data-iso]').forEach(function(el) {
+    const iso = el.dataset.iso;
+    if (iso) el.textContent = formatLocalTime(iso);
+  });
+  // Format session date/time and submitted date/time columns in the log table
+  document.querySelectorAll('.log-session-time[data-iso], .log-submitted-time[data-iso]').forEach(function(el) {
+    const iso = el.dataset.iso;
+    if (iso) el.textContent = formatLocalTime(iso);
+  });
 
-    // Auto-refresh every 30 seconds as a fallback
-    setInterval(function() {
-        if (!isComplete) {
-            refreshProgress();
-        }
-    }, 30000);
+  startStream();
+  setInterval(function() { if (!isComplete) refreshProgress(); }, 30000);
 });
-
-// Clean up when page is unloaded
 window.addEventListener('beforeunload', function() {
-    if (eventSource) {
-        eventSource.close();
-    }
+  if (eventSource) eventSource.close();
 });
 </script>
-
 </body>
 </html>

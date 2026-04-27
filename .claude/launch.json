@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Flask dev server",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["main.py"],
+      "port": 5000,
+      "autoPort": false
+    },
+    {
+      "name": "Celery worker",
+      "runtimeExecutable": "celery",
+      "runtimeArgs": ["-A", "tasks.celery_app", "worker", "-l", "info"],
+      "port": 6379
+    },
+    {
+      "name": "Celery beat (scheduler)",
+      "runtimeExecutable": "celery",
+      "runtimeArgs": ["-A", "tasks.celery_app", "beat", "-l", "info"],
+      "port": 6379
+    }
+  ]
+}

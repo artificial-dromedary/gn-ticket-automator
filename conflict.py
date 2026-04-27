@@ -21,6 +21,12 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
         candidate.conflict_type = None
         candidate.conflict_start_iso = None
         candidate.conflict_end_iso = None
+        candidate.conflict_other_id = None
+        candidate.conflict_other_title = None
+        candidate.conflict_other_teacher = None
+        candidate.conflict_other_teacher_email = None
+        candidate.conflict_other_start_iso = None
+        candidate.conflict_other_created_at = None
 
         candidate_start = candidate.start_time
         candidate_end = (candidate_start + timedelta(minutes=candidate.length or 0)
@@ -50,6 +56,12 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                     )
                     candidate.conflict_start_iso = existing_start.isoformat()
                     candidate.conflict_end_iso = existing_end.isoformat()
+                    candidate.conflict_other_id = existing.s_id
+                    candidate.conflict_other_title = existing.title
+                    candidate.conflict_other_teacher = existing.teacher
+                    candidate.conflict_other_teacher_email = getattr(existing, 'teacher_email', '')
+                    candidate.conflict_other_start_iso = existing_start.isoformat()
+                    candidate.conflict_other_created_at = getattr(existing, 'created_at', '')
                     break
 
         if candidate.is_conflict:
@@ -121,6 +133,12 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                 candidate.conflict_details = details
                 candidate.conflict_start_iso = other_start.isoformat()
                 candidate.conflict_end_iso = other_end.isoformat()
+                candidate.conflict_other_id = other.s_id
+                candidate.conflict_other_title = other.title
+                candidate.conflict_other_teacher = other.teacher
+                candidate.conflict_other_teacher_email = getattr(other, 'teacher_email', '')
+                candidate.conflict_other_start_iso = other_start.isoformat()
+                candidate.conflict_other_created_at = getattr(other, 'created_at', '')
 
                 if not other.is_conflict:
                     other.is_conflict = True
@@ -130,6 +148,12 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                     )
                     other.conflict_start_iso = candidate_start.isoformat()
                     other.conflict_end_iso = candidate_end.isoformat()
+                    other.conflict_other_id = candidate.s_id
+                    other.conflict_other_title = candidate.title
+                    other.conflict_other_teacher = candidate.teacher
+                    other.conflict_other_teacher_email = getattr(candidate, 'teacher_email', '')
+                    other.conflict_other_start_iso = candidate_start.isoformat()
+                    other.conflict_other_created_at = getattr(candidate, 'created_at', '')
                 break
 
     sessions_with_time = [
@@ -166,6 +190,12 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                 candidate.conflict_details = details
                 candidate.conflict_start_iso = other_start.isoformat()
                 candidate.conflict_end_iso = other_end.isoformat()
+                candidate.conflict_other_id = other.s_id
+                candidate.conflict_other_title = other.title
+                candidate.conflict_other_teacher = other.teacher
+                candidate.conflict_other_teacher_email = getattr(other, 'teacher_email', '')
+                candidate.conflict_other_start_iso = other_start.isoformat()
+                candidate.conflict_other_created_at = getattr(other, 'created_at', '')
 
                 if not other.is_conflict:
                     other.is_conflict = True
@@ -175,6 +205,12 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                     )
                     other.conflict_start_iso = candidate_start.isoformat()
                     other.conflict_end_iso = candidate_end.isoformat()
+                    other.conflict_other_id = candidate.s_id
+                    other.conflict_other_title = candidate.title
+                    other.conflict_other_teacher = candidate.teacher
+                    other.conflict_other_teacher_email = getattr(candidate, 'teacher_email', '')
+                    other.conflict_other_start_iso = candidate_start.isoformat()
+                    other.conflict_other_created_at = getattr(candidate, 'created_at', '')
                 break
 
     return candidate_sessions

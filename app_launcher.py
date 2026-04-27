@@ -187,6 +187,79 @@ def find_available_port(start_port=5000):
     return 5000
 
 
+def migrate_legacy_data():
+    """One-time migration: import ticket_submission_log.json into gn_ticket.db if not yet done."""
+    user_dir = Path.home() / 'GN_Ticket_Automator'
+    json_path = user_dir / 'ticket_submission_log.json'
+    if not json_path.exists():
+        return
+
+    try:
+        import json
+        from datetime import datetime, timezone
+        from sqlalchemy import select
+        from db import SessionLocal, Base, engine
+        from models import User, TicketSubmission
+
+        Base.metadata.create_all(bind=engine)
+        data = json.loads(json_path.read_text())
+        entries = data.get('entries', [])
+        if not entries:
+            return
+
+        with SessionLocal() as db:
+            # Count existing submissions
+            existing_ids = set(db.execute(select(TicketSubmission.session_id)).scalars().all())
+            new_entries = [e for e in entries if e.get('session_id') not in existing_ids]
+            if not new_entries:
+                return
+
+            print(f"📦 Migrating {len(new_entries)} legacy ticket submissions...")
+
+            # Group by submitter email, upsert each user
+            emails = {e.get('submitted_by', '').strip().lower() for e in new_entries if e.get('submitted_by')}
+            user_map = {}
+            for email in emails:
+                if not email:
+                    continue
+                user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+                if not user:
+                    user = User(email=email, created_at=datetime.utcnow(), last_login_at=datetime.utcnow())
+                    db.add(user)
+                    db.flush()
+                user_map[email] = user.id
+
+            for e in new_entries:
+                email = (e.get('submitted_by') or '').strip().lower()
+                user_id = user_map.get(email)
+                if not user_id:
+                    continue
+                start_time = None
+                if e.get('start_time'):
+                    st = datetime.fromisoformat(e['start_time'])
+                    start_time = st.replace(tzinfo=None) if st.tzinfo else st
+                submitted_at = None
+                if e.get('submitted_at'):
+                    sa = datetime.fromisoformat(e['submitted_at'])
+                    submitted_at = sa.replace(tzinfo=None) if sa.tzinfo else sa
+                db.add(TicketSubmission(
+                    user_id=user_id,
+                    submitted_at=submitted_at,
+                    session_id=e.get('session_id'),
+                    title=e.get('title', ''),
+                    school=e.get('school', ''),
+                    teacher=e.get('teacher', ''),
+                    ticket_id=e.get('ticket_id', ''),
+                    start_time=start_time,
+                    length=e.get('length', 0) or 0,
+                    status='success',
+                ))
+            db.commit()
+            print(f"✅ Migrated {len(new_entries)} submissions from legacy log")
+    except Exception as e:
+        print(f"⚠️ Legacy data migration failed (non-fatal): {e}")
+
+
 def copy_resources_if_needed():
     """Copy templates and static files to user directory if they're missing"""
     user_dir = Path.home() / 'GN_Ticket_Automator'
@@ -269,6 +342,9 @@ def main():
 
         # Copy other resources if needed (templates, static files)
         copy_resources_if_needed()
+
+        # Migrate legacy data if needed (one-time, non-fatal)
+        migrate_legacy_data()
 
         # Check Chrome installation (warn but don't fail)
         chrome_ok = check_chrome_installed()

@@ -126,6 +126,15 @@ class AirtableSession:
         self.school_lead_text = extract_text(fields.get('School Lead Text', ''), '')
         self.gn_ticket_requested = fields.get('GN Ticket Requested', False)
 
+        # Teacher email
+        self.teacher_email = extract_text(fields.get('Teacher Email', ''), '')
+
+        # School timezone (IANA string e.g. 'America/Iqaluit')
+        self.timezone = extract_text(fields.get('School Timezone', ''), '')
+
+        # Record creation time (used to determine booking order)
+        self.created_at = record_data.get('createdTime', '')
+
         # Conflict detection fields
         self.is_conflict = False
         self.conflict_details = ""

@@ -22,10 +22,10 @@ body {
 
 .session {
   border: 1px solid #ddd;
-  margin: 10px 0; /* Adjusted margin for full-width layout */
-  padding: 15px;
   border-radius: 5px;
   background: #f9f9f9;
+  padding: 10px 14px;
+  margin: 6px 0;
 }
 .session.session-conflict {
   border-color: #d9534f;
@@ -35,37 +35,68 @@ body {
   border-color: #f0ad4e;
   box-shadow: 0 0 0 2px rgba(240, 173, 78, 0.15);
 }
+.session.session-excluded {
+  opacity: 0.55;
+}
 .conflict-banner {
   background: #fcebea;
   border: 1px solid #d9534f;
   border-radius: 4px;
   color: #a94442;
   font-weight: bold;
-  margin-bottom: 12px;
-  padding: 10px;
+  margin-bottom: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .conflict-banner.conflict-gn-ticket {
   background: #fff3cd;
   border-color: #f0ad4e;
   color: #8a6d3b;
 }
-.session h4 {
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.session-title {
+  font-weight: 600;
   color: #333;
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-.session .tag {
-  color: #666;
   font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
 }
-.session .details {
-  margin-top: 10px;
+.session-meta {
+  font-size: 13px;
+  color: #555;
+  margin-top: 4px;
 }
-.session .detail-item {
-  margin: 5px 0;
-  padding: 8px;
-  background: #fff;
+.session-sub {
+  font-size: 12px;
+  color: #777;
+  margin-top: 2px;
+}
+.remove-btn {
+  flex-shrink: 0;
+  border: none;
+  padding: 3px 9px;
   border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.remove-btn.btn-exclude {
+  background: #e0e0e0;
+  color: #444;
+}
+.remove-btn.btn-include {
+  background: #2c7be5;
+  color: #fff;
 }
 .status-good {
   color: green;
@@ -110,91 +141,159 @@ body {
 .submission-log th {
   background: #eef3f8;
 }
+.gallery-scroll {
+  max-height: 2600px;
+  overflow-y: auto;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fff;
+}
+#book_sessions {
+  display: block;
+  width: 100%;
+  padding: 16px 24px;
+  font-size: 1.2rem;
+  font-weight: bold;
+  background: #2c7be5;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin: 16px 0;
+  box-shadow: 0 3px 8px rgba(44,123,229,0.35);
+  letter-spacing: 0.02em;
+}
+#book_sessions:hover {
+  background: #1a5cb8;
+}
+.conflict-email-btn {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #d9534f;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: none;
+}
+.conflict-email-btn:hover {
+  background: #b52b27;
+}
 </style>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script>
-$(document).ready(function(){
-  // This function is no longer strictly necessary if all sessions are shown by default
-  // but is kept in case you add filtering functionality later.
-  $("#show_all").click(function(){
-    $(".session").show();
-  });
-});
+function toggleSession(btn) {
+  var sessionDiv = $(btn).closest('.session');
+  var bookMeInput = sessionDiv.find('input[name="book_me"]');
+  if (bookMeInput.val() === 'y') {
+    bookMeInput.val('n');
+    sessionDiv.addClass('session-excluded');
+    $(btn).text('Process anyway').removeClass('btn-exclude').addClass('btn-include');
+  } else {
+    bookMeInput.val('y');
+    sessionDiv.removeClass('session-excluded');
+    $(btn).text('Remove').removeClass('btn-include').addClass('btn-exclude');
+  }
+}
 
-// Function to remove a session from processing
-function removeSession(button) {
-  var sessionDiv = $(button).closest('.session');
+function formatTimeInTz(isoString, timezone) {
+  if (!isoString) return 'Unknown time';
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return isoString;
+  const options = {
+    weekday: 'long', month: 'long', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
+  };
+  if (timezone) {
+    try { options.timeZone = timezone; } catch(e) {}
+  }
+  return new Intl.DateTimeFormat('en-US', options).format(date);
+}
 
-  // Set the hidden input to 'n' to exclude from processing
-  sessionDiv.find('input[name="book_me"]').val('n');
+function openConflictEmail(btn) {
+  const d = btn.dataset;
+  const baseId = 'appP1kThwW9zVEpHr';
+  const tz = d.timezone || '';
 
-  // Hide the session with a fade effect
-  sessionDiv.fadeOut(300);
+  const t1 = d.teacher || 'Teacher';
+  const t1Email = d.teacherEmail || '';
+  const s1Id = d.sessionId || '';
+  const s1Title = d.sessionTitle || 'Session';
+  const s1Time = formatTimeInTz(d.sessionTime, tz);
+  const s1Created = d.sessionCreated || '';
+
+  const t2 = d.otherTeacher || 'Other Teacher';
+  const t2Email = d.otherTeacherEmail || '';
+  const s2Id = d.otherSessionId || '';
+  const s2Title = d.otherSessionTitle || 'Other Session';
+  const s2Time = formatTimeInTz(d.otherSessionTime, tz);
+  const s2Created = d.otherSessionCreated || '';
+
+  // Determine which session was created (booked) first
+  let priorityName = t1.split(' ')[0] || t1;
+  let priorityNote = '';
+  if (s1Created && s2Created) {
+    const earlier = s1Created <= s2Created;
+    priorityName = earlier ? (t1.split(' ')[0] || t1) : (t2.split(' ')[0] || t2);
+    priorityNote = `\n\n${priorityName}'s session was booked first, so that one will stay unless ${priorityName} wants to change it.`;
+  } else {
+    priorityNote = `\n\nPlease check the Airtable history links above to determine which session was booked first — that one will take priority.`;
+  }
+
+  const tableId = 'tblRqP4N6gdA8WZEd';
+  const viewId  = 'viwaticgz8bjJcUif';
+  const link1 = `https://airtable.com/${baseId}/${tableId}/${viewId}/${s1Id}?blocks=hide`;
+  const link2 = `https://airtable.com/${baseId}/${tableId}/${viewId}/${s2Id}?blocks=hide`;
+
+  const to = [t1Email, t2Email].filter(Boolean).join(',');
+  const subject = `Time conflict: overlapping sessions`;
+  const body =
+    `Hi there,\n\n` +
+    `In setting up the videoconference connections, I saw that you each have sessions scheduled at overlapping times:\n\n` +
+    `• ${s1Title} (${t1}): ${s1Time}\n  Airtable: ${link1}\n\n` +
+    `• ${s2Title} (${t2}): ${s2Time}\n  Airtable: ${link2}\n\n` +
+    `Could either of you move your session to later in the day, or a different day?` +
+    priorityNote +
+    ` Just let me know what you'd like to do and I can help coordinate with the providers.\n\nThanks,`;
+
+  const gmailUrl = `https://mail.google.com/mail/?view=cm` +
+    `&to=${encodeURIComponent(to)}` +
+    `&su=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(body)}`;
+  window.open(gmailUrl, '_blank');
 }
 
 document.addEventListener('DOMContentLoaded', function() {
   const timeElements = document.querySelectorAll('.session-time[data-time]');
-
   timeElements.forEach(function(element) {
     const isoTime = element.getAttribute('data-time');
-
-    if (!isoTime) {
-      return;
-    }
-
+    if (!isoTime) return;
     const parsedDate = new Date(isoTime);
-
-    if (isNaN(parsedDate.getTime())) {
-      return;
-    }
-
+    if (isNaN(parsedDate.getTime())) return;
     const formatted = new Intl.DateTimeFormat([], {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZoneName: 'short'
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
     }).format(parsedDate);
-
     element.textContent = formatted;
   });
 
-
   const conflictRanges = document.querySelectorAll('.conflict-time-range[data-start][data-end]');
-
   conflictRanges.forEach(function(element) {
     const startIso = element.getAttribute('data-start');
     const endIso = element.getAttribute('data-end');
-
-    if (!startIso || !endIso) {
-      return;
-    }
-
+    if (!startIso || !endIso) return;
     const startDate = new Date(startIso);
     const endDate = new Date(endIso);
-
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      return;
-    }
-
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return;
     const startFormatted = new Intl.DateTimeFormat([], {
-      month: 'short',
-      day: '2-digit',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZoneName: 'short'
+      month: 'short', day: '2-digit',
+      hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
     }).format(startDate);
-
     const endFormatted = new Intl.DateTimeFormat([], {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZoneName: 'short'
+      hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
     }).format(endDate);
-
     element.textContent = ` (${startFormatted} – ${endFormatted}).`;
   });
 });
@@ -282,7 +381,70 @@ document.addEventListener('DOMContentLoaded', function() {
     <input type="hidden" name="buffer_before" value="{{ buffer_before }}">
     <input type="hidden" name="buffer_after" value="{{ buffer_after }}">
 
-    <div class="submission-log">
+    <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
+
+    <!-- Session Gallery Section -->
+    <h3>Current candidate sessions</h3>
+    <div class="gallery-scroll">
+    <div class="gallery">
+      {% if all_sessions %}
+        {% for session in all_sessions %}
+        {% set is_conflict = session.conflict_type %}
+        <div class="session{% if session.conflict_type == 'time' %} session-conflict{% elif session.conflict_type in ['gn_ticket', 'ghost_ticket'] %} session-gn-warning{% endif %}{% if is_conflict %} session-excluded{% endif %}">
+          <input name="book_me" type="hidden" id="{{session.s_id}}" value="{{ 'n' if is_conflict else 'y' }}">
+          <input name="airtable_id" type="hidden" id="{{session.s_id}}_airtable" value="{{session.s_id}}">
+
+          {% if session.conflict_type == 'time' %}
+          <div class="conflict-banner conflict-time">
+            <span>⚠️ Time conflict: {{ session.conflict_details }}{% if session.conflict_start_iso and session.conflict_end_iso %}<span class="conflict-time-range" data-start="{{ session.conflict_start_iso }}" data-end="{{ session.conflict_end_iso }}"></span>{% endif %}</span>
+            {% if session.conflict_other_id %}
+            <button type="button" class="conflict-email-btn"
+              data-teacher="{{ session.teacher | e }}"
+              data-teacher-email="{{ session.teacher_email | default('') | e }}"
+              data-session-id="{{ session.s_id }}"
+              data-session-title="{{ session.title | e }}"
+              data-session-time="{{ session.start_time.isoformat() if session.start_time else '' }}"
+              data-session-created="{{ session.created_at | default('') }}"
+              data-other-teacher="{{ session.conflict_other_teacher | default('') | e }}"
+              data-other-teacher-email="{{ session.conflict_other_teacher_email | default('') | e }}"
+              data-other-session-id="{{ session.conflict_other_id | default('') }}"
+              data-other-session-title="{{ session.conflict_other_title | default('') | e }}"
+              data-other-session-time="{{ session.conflict_other_start_iso | default('') }}"
+              data-other-session-created="{{ session.conflict_other_created_at | default('') }}"
+              data-timezone="{{ session.timezone | default('') | e }}"
+              onclick="openConflictEmail(this)">📧 Email teachers</button>
+            {% endif %}
+          </div>
+          {% elif session.conflict_type == 'gn_ticket' %}
+          <div class="conflict-banner conflict-gn-ticket">⚠️ GN ticket follow-up: {{ session.conflict_details }}</div>
+          {% elif session.conflict_type == 'ghost_ticket' %}
+          <div class="conflict-banner conflict-gn-ticket">⚠️ Rebooked/ghost ticket: {{ session.conflict_details }}</div>
+          {% endif %}
+
+          <div class="session-header">
+            <span class="session-title" title="{{ session.title }}">{{ session.title }}</span>
+            <button type="button" class="remove-btn {{ 'btn-include' if is_conflict else 'btn-exclude' }}" onclick="toggleSession(this)">{{ 'Process anyway' if is_conflict else 'Remove' }}</button>
+          </div>
+
+          <div class="session-meta">
+            <span class="session-time" data-time="{{ session.start_time.isoformat() if session.start_time else '' }}">{{ session.start_time.strftime('%Y-%m-%d %I:%M %p') if session.start_time else 'Not set' }}</span>
+            · {{ session.length }} min
+            · {% if session.zoom_link and session.zoom_link.strip() %}<span class="status-good">✅ Zoom</span>{% else %}<span class="status-bad">❌ No Zoom</span>{% endif %}
+          </div>
+
+          <div class="session-sub">{{ session.teacher }} · {{ session.school }}</div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="session">
+          <h4>No sessions found</h4>
+          <p>No sessions with "Booked" status were found. Check your Airtable configuration and make sure sessions have the correct status.</p>
+        </div>
+      {% endif %}
+    </div>
+    </div><!-- end gallery-scroll -->
+
+    <div class="submission-log" style="margin-top: 24px;">
       <strong>Recently booked sessions (last {{ window_past_days }} days)</strong>
       {% if submitted_ticket_log %}
       <table>
@@ -312,7 +474,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </tbody>
       </table>
       {% else %}
-      <p style="margin-top: 8px;">No submitted tickets have been logged in the last 30 days.</p>
+      <p style="margin-top: 8px;">No submitted tickets have been logged in the last {{ window_past_days }} days.</p>
       {% endif %}
     </div>
 
@@ -346,111 +508,6 @@ document.addEventListener('DOMContentLoaded', function() {
       {% endif %}
     </div>
 
-    <p>
-      <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
-    </p>
-
-    <!-- Session Gallery Section -->
-    <h3>Current candidate sessions</h3>
-    <div class="gallery">
-      {% if all_sessions %}
-        {% for session in all_sessions %}
-        <div class="session{% if session.conflict_type == 'time' %} session-conflict{% elif session.conflict_type in ['gn_ticket', 'ghost_ticket'] %} session-gn-warning{% endif %}">
-          <!-- Remove button with hidden form fields -->
-          <div style="text-align: left; margin-bottom: 10px;">
-            <button type="button" onclick="removeSession(this)" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
-              🗑️ Remove from processing
-            </button>
-            <input name="book_me" type="hidden" id="{{session.s_id}}" value="y">
-            <input name="airtable_id" type="hidden" id="{{session.s_id}}_airtable" value="{{session.s_id}}">
-          </div>
-
-          {% if session.conflict_type == 'time' %}
-          <div class="conflict-banner conflict-time">
-            ⚠️ Time conflict: {{ session.conflict_details }}
-            {% if session.conflict_start_iso and session.conflict_end_iso %}
-              <span class="conflict-time-range" data-start="{{ session.conflict_start_iso }}" data-end="{{ session.conflict_end_iso }}"></span>
-            {% endif %}
-          </div>
-          {% elif session.conflict_type == 'gn_ticket' %}
-          <div class="conflict-banner conflict-gn-ticket">
-            ⚠️ GN ticket follow-up needed: {{ session.conflict_details }}
-          </div>
-          {% elif session.conflict_type == 'ghost_ticket' %}
-          <div class="conflict-banner conflict-gn-ticket">
-            ⚠️ Rebooked/ghost ticket: {{ session.conflict_details }}
-          </div>
-          {% endif %}
-
-          <!-- Session Title -->
-          <h4>{{ session.title }}</h4>
-
-          <!-- Basic Info -->
-          <p class="tag">
-            <strong>School:</strong> {{ session.school }}<br>
-            <strong>Teacher:</strong> {{ session.teacher }}<br>
-            <strong>Date/Time:</strong>
-            <span class="session-time" data-time="{{ session.start_time.isoformat() if session.start_time else '' }}">
-              {{ session.start_time.strftime('%Y-%m-%d %I:%M %p %Z') if session.start_time else 'Not set' }}
-            </span>
-          </p>
-
-          <!-- Details Section -->
-          <div class="details">
-            <!-- Grades -->
-            <div class="detail-item">
-              <strong>Grades:</strong>
-              {% if session.grades and session.grades != "Unknown" and session.grades != "" %}
-                <span class="status-good">{{ session.grades }} ✅</span>
-              {% else %}
-                <span class="status-bad">Not specified ❌</span>
-              {% endif %}
-            </div>
-
-            <!-- Number of Students -->
-            <div class="detail-item">
-              <strong>Students:</strong>
-              {% if session.num_students and session.num_students > 1 %}
-                <span class="status-good">{{ session.num_students }} students ✅</span>
-              {% else %}
-                <span class="status-bad">Number not specified ❌</span>
-              {% endif %}
-            </div>
-
-            <!-- Community -->
-            <div class="detail-item">
-              <strong>Community:</strong> {{ session.community if session.community else 'Not specified' }}
-            </div>
-
-            <!-- Session Length -->
-            <div class="detail-item">
-              <strong>Duration:</strong> {{ session.length }} minutes
-            </div>
-
-            <!-- Zoom Link Status -->
-            <div class="detail-item">
-              <strong>Zoom Link:</strong>
-              {% if session.zoom_link and session.zoom_link.strip() %}
-                <span class="status-good">Available ✅</span>
-              {% else %}
-                <span class="status-bad">Missing ❌</span>
-              {% endif %}
-            </div>
-
-            <!-- Status -->
-            <div class="detail-item">
-              <strong>Status:</strong> {{ session.status }}
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      {% else %}
-        <div class="session">
-          <h4>No sessions found</h4>
-          <p>No sessions with "Booked" status were found. Check your Airtable configuration and make sure sessions have the correct status.</p>
-        </div>
-      {% endif %}
-    </div>
   </form>
 </div>
 

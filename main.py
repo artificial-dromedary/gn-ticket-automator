@@ -192,11 +192,11 @@ def create_flow():
     return flow
 
 
-def set_progress(session_id, message, step=None, total_steps=None, status="running"):
+def set_progress(session_id, message, step=None, total_steps=None, status="running", session_ref=None):
     """Update progress for a specific session"""
     with progress_lock:
         if session_id not in progress_store:
-            progress_store[session_id] = deque(maxlen=50)
+            progress_store[session_id] = deque(maxlen=200)
             progress_counters[session_id] = 0
         progress_counters[session_id] += 1
         progress_store[session_id].append({
@@ -205,7 +205,8 @@ def set_progress(session_id, message, step=None, total_steps=None, status="runni
             'message': message,
             'step': step,
             'total_steps': total_steps,
-            'status': status
+            'status': status,
+            'session_ref': session_ref,
         })
 
 
@@ -484,8 +485,26 @@ def do_gn_ticket():
 
     threading.Thread(target=run_booking, daemon=True).start()
 
-    return render_template("progress.html", progress_session_id=progress_session_id,
-                           session_count=len(send_to_gn), user=user)
+    sessions_for_template = [
+        {
+            's_id': s.s_id,
+            'title': s.title,
+            'school': s.school,
+            'community': s.community,
+            'start_time_iso': s.start_time.isoformat() if s.start_time else '',
+            'length': s.length,
+        }
+        for s in send_to_gn
+    ]
+
+    return render_template(
+        "progress.html",
+        progress_session_id=progress_session_id,
+        session_count=len(send_to_gn),
+        sessions=sessions_for_template,
+        submitted_ticket_log=ticket_log.get_entries(user['email']),
+        user=user,
+    )
 
 
 @app.route("/progress/<session_id>")
@@ -552,6 +571,7 @@ def setup_profile():
                                    error="Airtable API key must start with 'pat'.")
 
         try:
+            user_manager.upsert_user(user['email'], user.get('name'), user.get('picture', ''))
             user_manager.save_profile(user['email'], profile_data)
             return redirect(url_for('gn_ticket_page'))
         except Exception as e:
@@ -690,4 +710,4 @@ gn_ticket.set_progress_callback(set_progress)
 
 if __name__ == "__main__":
     # Run the Flask app without debug mode when packaged for production
-    app.run(debug=False)
+    app.run(debug=False, port=5001)
