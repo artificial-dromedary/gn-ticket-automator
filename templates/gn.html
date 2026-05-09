@@ -231,14 +231,10 @@ function openConflictEmail(btn) {
   const s2Time = formatTimeInTz(d.otherSessionTime, tz);
   const s2Created = d.otherSessionCreated || '';
 
-  // Determine which session was created (booked) first
-  let priorityFirstName = t1.split(' ')[0] || t1;
-  let nonPriorityFirstName = t2.split(' ')[0] || t2;
-  if (s1Created && s2Created && s1Created > s2Created) {
-    // s2 was booked first → t2 has priority
-    priorityFirstName = t2.split(' ')[0] || t2;
-    nonPriorityFirstName = t1.split(' ')[0] || t1;
-  }
+  // t1 = candidate session being submitted (non-priority)
+  // t2 = existing Airtable conflict session (priority — already booked)
+  const priorityFirstName = t2.split(' ')[0] || t2;
+  const nonPriorityFirstName = t1.split(' ')[0] || t1;
 
   const tableId = 'tblRqP4N6gdA8WZEd';
   const viewId  = 'viwaticgz8bjJcUif';
