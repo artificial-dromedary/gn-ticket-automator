@@ -232,14 +232,12 @@ function openConflictEmail(btn) {
   const s2Created = d.otherSessionCreated || '';
 
   // Determine which session was created (booked) first
-  let priorityName = t1.split(' ')[0] || t1;
-  let priorityNote = '';
-  if (s1Created && s2Created) {
-    const earlier = s1Created <= s2Created;
-    priorityName = earlier ? (t1.split(' ')[0] || t1) : (t2.split(' ')[0] || t2);
-    priorityNote = `\n\n${priorityName}'s session was booked first, so that one will stay unless ${priorityName} wants to change it.`;
-  } else {
-    priorityNote = `\n\nPlease check the Airtable history links above to determine which session was booked first — that one will take priority.`;
+  let priorityFirstName = t1.split(' ')[0] || t1;
+  let nonPriorityFirstName = t2.split(' ')[0] || t2;
+  if (s1Created && s2Created && s1Created > s2Created) {
+    // s2 was booked first → t2 has priority
+    priorityFirstName = t2.split(' ')[0] || t2;
+    nonPriorityFirstName = t1.split(' ')[0] || t1;
   }
 
   const tableId = 'tblRqP4N6gdA8WZEd';
@@ -250,13 +248,11 @@ function openConflictEmail(btn) {
   const to = [t1Email, t2Email].filter(Boolean).join(',');
   const subject = `Time conflict: overlapping sessions`;
   const body =
-    `Hi there,\n\n` +
-    `In setting up the videoconference connections, I saw that you each have sessions scheduled at overlapping times:\n\n` +
     `• ${s1Title} (${t1}): ${s1Time}\n  Airtable: ${link1}\n\n` +
     `• ${s2Title} (${t2}): ${s2Time}\n  Airtable: ${link2}\n\n` +
-    `Could either of you move your session to later in the day, or a different day?` +
-    priorityNote +
-    ` Just let me know what you'd like to do and I can help coordinate with the providers.\n\nThanks,`;
+    `There are two options: one is for ${nonPriorityFirstName} to connect from the classroom via Zoom (rather than the Cisco machine), which can work if your internet is generally pretty reliable. ` +
+    `Option two is to rebook one of the sessions. ${priorityFirstName}'s session was booked first, so that one is given priority.\n\n` +
+    `Could you let me know what you'd like to do?`;
 
   const gmailUrl = `https://mail.google.com/mail/?view=cm` +
     `&to=${encodeURIComponent(to)}` +
