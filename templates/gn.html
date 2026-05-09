@@ -248,6 +248,7 @@ function openConflictEmail(btn) {
   const to = [t1Email, t2Email].filter(Boolean).join(',');
   const subject = `Time conflict: overlapping sessions`;
   const body =
+    `Hi there,\n\nIn setting up the videoconference connection, I saw that there are two sessions overlapping for your school:\n\n` +
     `• ${s1Title} (${t1}): ${s1Time}\n  Airtable: ${link1}\n\n` +
     `• ${s2Title} (${t2}): ${s2Time}\n  Airtable: ${link2}\n\n` +
     `There are two options: one is for ${nonPriorityFirstName} to connect from the classroom via Zoom (rather than the Cisco machine), which can work if your internet is generally pretty reliable. ` +
