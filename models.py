@@ -66,6 +66,17 @@ class TicketSubmission(Base):
     status = Column(String(64), default="success")
 
 
+class ConflictEmailLog(Base):
+    """Records when a conflict notification email was sent for a session."""
+    __tablename__ = "conflict_email_log"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    session_id = Column(String(255), nullable=False, index=True)   # candidate session s_id
+    conflict_session_id = Column(String(255))                       # the Airtable conflict session id
+    emailed_at = Column(DateTime, default=utcnow)
+
+
 class ScanResult(Base):
     __tablename__ = "scan_results"
 

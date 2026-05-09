@@ -107,7 +107,7 @@ from google_auth_oauthlib.flow import Flow
 from collections import deque
 from conflict import check_for_time_conflicts
 from db import SessionLocal
-from models import ScanResult, User
+from models import ScanResult, User, ConflictEmailLog
 from tasks import scan_user
 
 # Global progress storage. Each session keeps a deque of the most recent entries
@@ -386,6 +386,7 @@ def gn_ticket_page():
         session['book_session_ids'] = [s.s_id for s in candidate_sessions]
 
         latest_conflicts = []
+        emailed_conflict_ids = set()
         with SessionLocal() as db:
             db_user = db.execute(
                 select(User).where(User.email == user['email'].strip().lower())
@@ -402,11 +403,18 @@ def gn_ticket_page():
                     except (TypeError, json.JSONDecodeError):
                         latest_conflicts = []
 
+                email_rows = db.execute(
+                    select(ConflictEmailLog)
+                    .where(ConflictEmailLog.user_id == db_user.id)
+                ).scalars().all()
+                emailed_conflict_ids = {row.session_id for row in email_rows}
+
         return render_template(
             "gn.html",
             all_sessions=candidate_sessions,
             submitted_ticket_log=submitted_ticket_log,
             latest_conflicts=latest_conflicts,
+            emailed_conflict_ids=emailed_conflict_ids,
             user=user,
             buffer_before=buffer_before,
             buffer_after=buffer_after,
@@ -505,6 +513,41 @@ def do_gn_ticket():
         submitted_ticket_log=ticket_log.get_entries(user['email']),
         user=user,
     )
+
+
+@app.route("/gn_ticket/conflict_emailed", methods=["POST"])
+@require_auth
+def record_conflict_email():
+    """Record that a conflict notification email was sent for a session."""
+    user = session['user']
+    data = request.get_json(silent=True) or {}
+    session_id = data.get('session_id', '').strip()
+    conflict_session_id = data.get('conflict_session_id', '').strip()
+    if not session_id:
+        return jsonify({'ok': False, 'error': 'missing session_id'}), 400
+    try:
+        with SessionLocal() as db:
+            db_user = db.execute(
+                select(User).where(User.email == user['email'].strip().lower())
+            ).scalar_one_or_none()
+            if not db_user:
+                return jsonify({'ok': False, 'error': 'user not found'}), 404
+            # Upsert: delete existing record for this session_id then insert fresh
+            from sqlalchemy import delete as sa_delete
+            db.execute(sa_delete(ConflictEmailLog).where(
+                ConflictEmailLog.user_id == db_user.id,
+                ConflictEmailLog.session_id == session_id,
+            ))
+            db.add(ConflictEmailLog(
+                user_id=db_user.id,
+                session_id=session_id,
+                conflict_session_id=conflict_session_id,
+            ))
+            db.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        logging.error(f"conflict_emailed error: {e}", exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route("/progress/<session_id>")

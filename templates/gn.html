@@ -181,6 +181,18 @@ body {
 .conflict-email-btn:hover {
   background: #b52b27;
 }
+.conflict-emailed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: #fff3cd;
+  color: #7a5800;
+  border: 1px solid #f0c040;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
 </style>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script>
@@ -256,6 +268,21 @@ function openConflictEmail(btn) {
     `&su=${encodeURIComponent(subject)}` +
     `&body=${encodeURIComponent(body)}`;
   window.open(gmailUrl, '_blank');
+
+  // Record the send and swap button → badge
+  const sessionId = d.sessionId || '';
+  const conflictSessionId = d.otherSessionId || '';
+  fetch('/gn_ticket/conflict_emailed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, conflict_session_id: conflictSessionId }),
+  }).catch(console.error);
+
+  const badge = document.createElement('span');
+  badge.className = 'conflict-emailed-badge';
+  badge.id = 'emailed-badge-' + sessionId;
+  badge.textContent = '📬 Email sent — awaiting teacher response';
+  btn.replaceWith(badge);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -391,21 +418,25 @@ document.addEventListener('DOMContentLoaded', function() {
           <div class="conflict-banner conflict-time">
             <span>⚠️ Time conflict: {{ session.conflict_details }}{% if session.conflict_start_iso and session.conflict_end_iso %}<span class="conflict-time-range" data-start="{{ session.conflict_start_iso }}" data-end="{{ session.conflict_end_iso }}"></span>{% endif %}</span>
             {% if session.conflict_other_id %}
-            <button type="button" class="conflict-email-btn"
-              data-teacher="{{ session.teacher | e }}"
-              data-teacher-email="{{ session.teacher_email | default('') | e }}"
-              data-session-id="{{ session.s_id }}"
-              data-session-title="{{ session.title | e }}"
-              data-session-time="{{ session.start_time.isoformat() if session.start_time else '' }}"
-              data-session-created="{{ session.created_at | default('') }}"
-              data-other-teacher="{{ session.conflict_other_teacher | default('') | e }}"
-              data-other-teacher-email="{{ session.conflict_other_teacher_email | default('') | e }}"
-              data-other-session-id="{{ session.conflict_other_id | default('') }}"
-              data-other-session-title="{{ session.conflict_other_title | default('') | e }}"
-              data-other-session-time="{{ session.conflict_other_start_iso | default('') }}"
-              data-other-session-created="{{ session.conflict_other_created_at | default('') }}"
-              data-timezone="{{ session.timezone | default('') | e }}"
-              onclick="openConflictEmail(this)">📧 Email teachers</button>
+              {% if session.s_id in emailed_conflict_ids %}
+              <span class="conflict-emailed-badge" id="emailed-badge-{{ session.s_id }}">📬 Email sent — awaiting teacher response</span>
+              {% else %}
+              <button type="button" class="conflict-email-btn" id="email-btn-{{ session.s_id }}"
+                data-teacher="{{ session.teacher | e }}"
+                data-teacher-email="{{ session.teacher_email | default('') | e }}"
+                data-session-id="{{ session.s_id }}"
+                data-session-title="{{ session.title | e }}"
+                data-session-time="{{ session.start_time.isoformat() if session.start_time else '' }}"
+                data-session-created="{{ session.created_at | default('') }}"
+                data-other-teacher="{{ session.conflict_other_teacher | default('') | e }}"
+                data-other-teacher-email="{{ session.conflict_other_teacher_email | default('') | e }}"
+                data-other-session-id="{{ session.conflict_other_id | default('') }}"
+                data-other-session-title="{{ session.conflict_other_title | default('') | e }}"
+                data-other-session-time="{{ session.conflict_other_start_iso | default('') }}"
+                data-other-session-created="{{ session.conflict_other_created_at | default('') }}"
+                data-timezone="{{ session.timezone | default('') | e }}"
+                onclick="openConflictEmail(this)">📧 Email teachers</button>
+              {% endif %}
             {% endif %}
           </div>
           {% elif session.conflict_type == 'gn_ticket' %}
