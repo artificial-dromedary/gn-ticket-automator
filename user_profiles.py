@@ -160,11 +160,15 @@ class UserProfileManager:
         return all(profile.get(field) for field in required_fields)
 
     def list_auto_enabled_users(self):
+        """Emails of users who opted in to automated booking."""
         with SessionLocal() as db:
-            results = db.execute(
-                select(User).join(UserPreference).where(UserPreference.auto_booking_enabled.is_(True))
-            ).scalars().all()
-            return results
+            return [
+                email for (email,) in db.execute(
+                    select(User.email)
+                    .join(UserPreference, UserPreference.user_id == User.id)
+                    .where(UserPreference.auto_booking_enabled.is_(True))
+                ).all()
+            ]
 
     def get_user_by_email(self, email):
         email = email.strip().lower()

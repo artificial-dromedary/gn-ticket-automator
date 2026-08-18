@@ -1,7 +1,15 @@
 from datetime import datetime, timedelta, timezone
 
-from main import check_for_time_conflicts
+from sqlalchemy import select, update
+
+from conflict import check_for_time_conflicts
+from db import SessionLocal
+from models import TicketSubmission, User
 from ticket_submission_log import TicketSubmissionLog
+from user_profiles import user_manager
+
+
+USER_EMAIL = 'user@example.com'
 
 
 class DummySession:
@@ -19,40 +27,81 @@ class DummySession:
         self.conflict_type = None
 
 
-def test_ticket_submission_log_prunes_old_entries(tmp_path):
-    log = TicketSubmissionLog(tmp_path / 'ticket_log.json', retention_days=30)
+def _backdate(session_id, days):
+    """Push a submission's timestamp into the past so pruning can see it."""
+    with SessionLocal() as db:
+        db.execute(
+            update(TicketSubmission)
+            .where(TicketSubmission.session_id == session_id)
+            .values(submitted_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days))
+        )
+        db.commit()
 
+
+def test_ticket_submission_log_prunes_old_entries():
+    user_manager.upsert_user(USER_EMAIL, name='Test User')
+    log = TicketSubmissionLog(retention_days=30)
     now = datetime.now(timezone.utc)
-    old_time = (now - timedelta(days=45)).isoformat()
 
-    log._write_entries_unlocked([
-        {
-            'submitted_at': old_time,
-            'submitted_by': 'user@example.com',
-            'session_id': 'old',
-            'title': 'Old session',
-            'school': 'Old School',
-            'ticket_id': 'REQ001',
-            'start_time': now.isoformat(),
-            'length': 60,
-        }
-    ])
+    log.add_successful_submissions(USER_EMAIL, [{
+        'session_id': 'old',
+        'title': 'Old session',
+        'school': 'Old School',
+        'teacher': 'T',
+        'ticket_id': 'REQ001',
+        'start_time': now.isoformat(),
+        'length': 60,
+    }])
+    _backdate('old', days=45)
 
-    log.add_successful_submissions('user@example.com', [
-        {
-            'session_id': 'new',
-            'title': 'New Session',
-            'school': 'New School',
-            'teacher': 'T',
-            'ticket_id': 'REQ002',
-            'start_time': now.isoformat(),
-            'length': 45,
-        }
-    ])
+    log.add_successful_submissions(USER_EMAIL, [{
+        'session_id': 'new',
+        'title': 'New Session',
+        'school': 'New School',
+        'teacher': 'T',
+        'ticket_id': 'REQ002',
+        'start_time': now.isoformat(),
+        'length': 45,
+    }])
 
-    entries = log.get_entries('user@example.com')
+    entries = log.get_entries(USER_EMAIL)
     assert len(entries) == 1
     assert entries[0]['ticket_id'] == 'REQ002'
+
+    with SessionLocal() as db:
+        remaining = db.execute(select(TicketSubmission.session_id)).scalars().all()
+    assert remaining == ['new']
+
+
+def test_submissions_are_scoped_to_their_user():
+    user_manager.upsert_user(USER_EMAIL, name='Test User')
+    user_manager.upsert_user('other@example.com', name='Other User')
+    log = TicketSubmissionLog()
+    now = datetime.now(timezone.utc)
+
+    log.add_successful_submissions(USER_EMAIL, [{
+        'session_id': 'mine', 'title': 'Mine', 'school': 'S', 'teacher': 'T',
+        'ticket_id': 'REQ100', 'start_time': now.isoformat(), 'length': 60,
+    }])
+    log.add_successful_submissions('other@example.com', [{
+        'session_id': 'theirs', 'title': 'Theirs', 'school': 'S', 'teacher': 'T',
+        'ticket_id': 'REQ200', 'start_time': now.isoformat(), 'length': 60,
+    }])
+
+    assert [e['ticket_id'] for e in log.get_entries(USER_EMAIL)] == ['REQ100']
+    assert [e['ticket_id'] for e in log.get_entries('other@example.com')] == ['REQ200']
+
+
+def test_submissions_for_unknown_user_are_ignored():
+    log = TicketSubmissionLog()
+    log.add_successful_submissions('nobody@example.com', [{
+        'session_id': 'x', 'title': 'X', 'school': 'S', 'teacher': 'T',
+        'ticket_id': 'REQ300', 'start_time': None, 'length': 60,
+    }])
+
+    with SessionLocal() as db:
+        assert db.execute(select(User)).scalars().all() == []
+        assert db.execute(select(TicketSubmission)).scalars().all() == []
 
 
 def test_conflict_detection_flags_ghost_ticket_overlap():

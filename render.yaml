@@ -3,12 +3,15 @@ services:
     name: gn-ticket-redis
     plan: starter
 
+  # All three services build from the same Dockerfile: the web service runs Selenium
+  # in a thread for manual booking, and the worker runs it for automated booking, so
+  # both need Chromium available.
   - type: web
     name: gn-ticket-web
-    env: python
+    runtime: docker
     plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app
+    dockerfilePath: ./Dockerfile
+    dockerCommand: gunicorn main:app --bind 0.0.0.0:$PORT --timeout 120 --graceful-timeout 120 --workers 1 --threads 2
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -41,13 +44,20 @@ services:
         sync: false
       - key: CHATGPT_API_KEY
         sync: false
+      - key: AUTO_SCAN_TZ
+        value: America/Toronto
+      - key: AUTO_SCAN_HOUR
+        value: "6"
+      - key: AUTO_SCAN_MINUTE
+        value: "0"
 
   - type: worker
     name: gn-ticket-worker
-    env: python
+    runtime: docker
     plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A tasks.celery_app worker -l info
+    dockerfilePath: ./Dockerfile
+    # One Chrome per worker: booking is memory-hungry on a starter plan.
+    dockerCommand: celery -A tasks.celery_app worker -l info --concurrency 1
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -80,13 +90,19 @@ services:
         sync: false
       - key: CHATGPT_API_KEY
         sync: false
+      - key: AUTO_SCAN_TZ
+        value: America/Toronto
+      - key: AUTO_SCAN_HOUR
+        value: "6"
+      - key: AUTO_SCAN_MINUTE
+        value: "0"
 
   - type: worker
     name: gn-ticket-beat
-    env: python
+    runtime: docker
     plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A tasks.celery_app beat -l info
+    dockerfilePath: ./Dockerfile
+    dockerCommand: celery -A tasks.celery_app beat -l info
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -119,6 +135,12 @@ services:
         sync: false
       - key: CHATGPT_API_KEY
         sync: false
+      - key: AUTO_SCAN_TZ
+        value: America/Toronto
+      - key: AUTO_SCAN_HOUR
+        value: "6"
+      - key: AUTO_SCAN_MINUTE
+        value: "0"
 
 databases:
   - name: gn-ticket-db

@@ -108,7 +108,7 @@ from collections import deque
 from conflict import check_for_time_conflicts
 from db import SessionLocal
 from models import ScanResult, User, ConflictEmailLog
-from tasks import scan_user
+from tasks import scan_user, auto_scan_time_label
 
 # Global progress storage. Each session keeps a deque of the most recent entries
 # (up to 50) along with a monotonically increasing sequence counter.
@@ -386,6 +386,7 @@ def gn_ticket_page():
         session['book_session_ids'] = [s.s_id for s in candidate_sessions]
 
         latest_conflicts = []
+        latest_scan = None
         emailed_conflict_ids = set()
         with SessionLocal() as db:
             db_user = db.execute(
@@ -402,6 +403,12 @@ def gn_ticket_page():
                         latest_conflicts = json.loads(scan.conflicts_json)
                     except (TypeError, json.JSONDecodeError):
                         latest_conflicts = []
+                if scan:
+                    try:
+                        latest_scan = json.loads(scan.summary) if scan.summary else {}
+                    except (TypeError, json.JSONDecodeError):
+                        latest_scan = {}
+                    latest_scan['scanned_at'] = scan.scanned_at.isoformat() if scan.scanned_at else None
 
                 email_rows = db.execute(
                     select(ConflictEmailLog)
@@ -421,6 +428,8 @@ def gn_ticket_page():
             window_past_days=window_past_days,
             window_future_days=window_future_days,
             auto_booking_enabled=auto_booking_enabled,
+            auto_scan_time=auto_scan_time_label(),
+            latest_scan=latest_scan,
         )
     except Exception as e:
         logging.error(f"Error loading sessions: {e}", exc_info=True)
