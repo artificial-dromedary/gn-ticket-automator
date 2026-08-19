@@ -108,7 +108,7 @@ from collections import deque
 from conflict import check_for_time_conflicts
 from db import SessionLocal
 from models import ScanResult, User, ConflictEmailLog
-from tasks import scan_user, auto_scan_time_label
+from tasks import auto_scan_time_label, dispatch_scan
 
 # Global progress storage. Each session keeps a deque of the most recent entries
 # (up to 50) along with a monotonically increasing sequence counter.
@@ -654,7 +654,9 @@ def update_preferences():
 @require_auth
 def run_auto_scan_now():
     user = session['user']
-    scan_user.delay(user['email'])
+    # Runs in a thread so the request returns immediately whether the scan is being
+    # enqueued to a worker or executed inline (the no-broker cron deployment).
+    threading.Thread(target=dispatch_scan, args=(user['email'],), daemon=True).start()
     return redirect(url_for('gn_ticket_page'))
 
 

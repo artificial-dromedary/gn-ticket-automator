@@ -23,6 +23,20 @@ import gn_ticket
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# When there is no Celery broker — the Render Cron Job deployment — tasks run inline in
+# the calling process instead of being enqueued. Set GN_INLINE_TASKS=1 there.
+INLINE_TASKS = os.getenv("GN_INLINE_TASKS", "").strip().lower() in ("1", "true", "yes")
+
+# A dry run does everything except submit to ServiceNow: it reads Airtable, detects
+# conflicts, records the scan, and reports what it *would* have booked.
+DRY_RUN = os.getenv("GN_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+
+# Ceiling on bookings per run, as a blast-radius guard. 0 means no limit.
+try:
+    MAX_BOOKINGS_PER_RUN = int(os.getenv("GN_MAX_BOOKINGS_PER_RUN", "0"))
+except ValueError:
+    MAX_BOOKINGS_PER_RUN = 0
+
 # A scan is quick (Airtable reads only); a booking run drives Chrome and can take a while.
 SCAN_LOCK_TTL = 10 * 60
 BOOK_LOCK_TTL = 2 * 60 * 60
@@ -207,13 +221,29 @@ def _record_booking_outcome(user_email, successful, failed):
         db.commit()
 
 
+def dispatch_scan(user_email):
+    """Queue a scan, or run it here when there is no broker."""
+    if INLINE_TASKS:
+        return scan_user(user_email)
+    return scan_user.delay(user_email)
+
+
+def dispatch_booking(user_email, session_ids):
+    """Queue a booking run, or run it here when there is no broker."""
+    if INLINE_TASKS:
+        return book_sessions(user_email, session_ids)
+    return book_sessions.delay(user_email, session_ids)
+
+
 @celery_app.task(name="tasks.run_scheduled_scan")
 def run_scheduled_scan():
-    for email in user_manager.list_auto_enabled_users():
+    emails = user_manager.list_auto_enabled_users()
+    logger.info("Scheduled scan starting for %d opted-in user(s).", len(emails))
+    for email in emails:
         try:
-            scan_user.delay(email)
+            dispatch_scan(email)
         except Exception as exc:
-            logger.error("Failed to enqueue scan for %s: %s", email, exc)
+            logger.error("Scan failed for %s: %s", email, exc, exc_info=True)
 
 
 @celery_app.task(name="tasks.run_hourly_scan")
@@ -271,7 +301,7 @@ def _scan_user(user_email):
             logger.error("Could not send conflict email to %s: %s", user_email, exc)
 
     if clean:
-        book_sessions.delay(user_email, [s.s_id for s in clean])
+        dispatch_booking(user_email, [s.s_id for s in clean])
 
 
 @celery_app.task(name="tasks.book_sessions")
@@ -319,6 +349,23 @@ def _book_sessions(user_email, session_ids):
 
     if not send_to_gn:
         return
+
+    if MAX_BOOKINGS_PER_RUN and len(send_to_gn) > MAX_BOOKINGS_PER_RUN:
+        logger.warning(
+            "Capping this run at %d of %d bookable session(s) for %s (GN_MAX_BOOKINGS_PER_RUN). "
+            "The remainder are picked up on the next run.",
+            MAX_BOOKINGS_PER_RUN, len(send_to_gn), user_email,
+        )
+        send_to_gn = send_to_gn[:MAX_BOOKINGS_PER_RUN]
+
+    if DRY_RUN:
+        logger.warning(
+            "DRY RUN for %s: would submit %d ticket(s) and is submitting none. Sessions: %s",
+            user_email, len(send_to_gn),
+            ", ".join(f"{s.s_id} ({s.title} @ {s.school})" for s in send_to_gn),
+        )
+        _record_booking_outcome(user_email, [], [])
+        return {"dry_run": True, "would_book": [s.s_id for s in send_to_gn]}
 
     gn_ticket.set_progress_callback(lambda *args, **kwargs: None)
 
