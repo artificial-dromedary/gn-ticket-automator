@@ -108,7 +108,7 @@ from collections import deque
 from conflict import check_for_time_conflicts
 from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
-from tasks import auto_scan_time_label, dispatch_scan
+from tasks import auto_scan_time_label, booking_in_progress, booking_slot, busy_notice, dispatch_scan
 
 # Global progress storage. Each session keeps a deque of the most recent entries
 # (up to 50) along with a monotonically increasing sequence counter.
@@ -440,6 +440,7 @@ def gn_ticket_page():
             auto_booking_enabled=auto_booking_enabled,
             auto_scan_time=auto_scan_time_label(),
             latest_scan=latest_scan,
+            booking_busy_since=booking_in_progress(),
         )
     except Exception as e:
         logging.error(f"Error loading sessions: {e}", exc_info=True)
@@ -491,20 +492,35 @@ def do_gn_ticket():
 
     def run_booking():
         try:
-            booking_results = gn_ticket.gn_ticket_handler(
-                send_to_gn,
-                user['email'],
-                profile.get('servicenow_password'),
-                "connectednorth@takingitglobal.org",
-                progress_session_id,
-                profile.get('airtable_api_key'),
-                profile.get('totp_secret'),
-                headless_mode=headless_mode_enabled,  # This will control browser visibility
-                allow_manual_site_selection=True,  # Explicitly enable manual intervention
-                chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY'),
-                buffer_before=buffer_before,
-                buffer_after=buffer_after
-            )
+            # One browser at a time across the whole service. Two at once is how a run
+            # gets killed for memory, so a busy service queues instead of failing.
+            def announce(seconds_left):
+                set_progress(progress_session_id, busy_notice(seconds_left), status="waiting")
+
+            with booking_slot(on_wait=announce) as slot:
+                if not slot:
+                    set_progress(
+                        progress_session_id,
+                        "Another booking run is still going after a long wait. Nothing was "
+                        "booked — these sessions are untouched, so try again shortly.",
+                        status="error",
+                    )
+                    return
+
+                booking_results = gn_ticket.gn_ticket_handler(
+                    send_to_gn,
+                    user['email'],
+                    profile.get('servicenow_password'),
+                    "connectednorth@takingitglobal.org",
+                    progress_session_id,
+                    profile.get('airtable_api_key'),
+                    profile.get('totp_secret'),
+                    headless_mode=headless_mode_enabled,  # This will control browser visibility
+                    allow_manual_site_selection=True,  # Explicitly enable manual intervention
+                    chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY'),
+                    buffer_before=buffer_before,
+                    buffer_after=buffer_after
+                )
             ticket_log.add_successful_submissions(user['email'], booking_results.get('successful_sessions', []))
         except Exception as e:
             set_progress(progress_session_id, f"Critical error during booking: {str(e)}", status="error")

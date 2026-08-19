@@ -386,6 +386,13 @@ document.addEventListener('DOMContentLoaded', function() {
         <button type="submit">Save settings</button>
         <button type="submit" formaction="/auto/run" style="margin-left: 10px;">Run auto scan now</button>
       </div>
+      {% if booking_busy_since %}
+      <div style="margin-top: 12px; padding: 10px 12px; background: #fff6e0; border: 1px solid #e6c682; border-radius: 4px; font-size: 0.9em;">
+        <strong>A booking run is in progress.</strong>
+        Started {{ booking_busy_since.strftime('%H:%M') }} UTC. Only one runs at a time —
+        if you start another it will wait its turn rather than fail.
+      </div>
+      {% endif %}
       {% if latest_scan %}
       <div style="margin-top: 12px; font-size: 0.9em; color: #333;">
         <strong>Last automatic run:</strong>

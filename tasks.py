@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -9,6 +11,7 @@ from celery import Celery
 from celery.schedules import crontab
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 
 from airtable_integration import create_airtable_client
@@ -37,9 +40,25 @@ try:
 except ValueError:
     MAX_BOOKINGS_PER_RUN = 0
 
-# A scan is quick (Airtable reads only); a booking run drives Chrome and can take a while.
-SCAN_LOCK_TTL = 10 * 60
-BOOK_LOCK_TTL = 2 * 60 * 60
+# Lock lifetimes are short because a holder refreshes its own claim while it works
+# (see _Heartbeat). Short TTL + refresh means a process that dies mid-run frees its
+# lock within minutes instead of wedging the next run for hours.
+LOCK_TTL = 5 * 60
+LOCK_HEARTBEAT_SECONDS = 60
+
+SCAN_LOCK_TTL = LOCK_TTL
+BOOK_LOCK_TTL = LOCK_TTL
+
+# Only one browser-driving booking run at a time, across every user and every
+# service. Chrome is the memory ceiling on a small instance, so two at once is how
+# a run gets killed rather than how two runs finish faster.
+BOOKING_SLOT = "booking-slot"
+
+# Waiting beats failing: these runs are never urgent, so a busy service queues.
+BUSY_POLL_SECONDS = int(os.getenv("GN_BUSY_POLL_SECONDS", "30"))
+BUSY_MAX_WAIT_SECONDS = int(os.getenv("GN_BUSY_MAX_WAIT_SECONDS", str(60 * 60)))
+# How often to announce that we are still waiting, so logs don't fill with notices.
+BUSY_NOTICE_SECONDS = int(os.getenv("GN_BUSY_NOTICE_SECONDS", "300"))
 
 celery_app = Celery("gn_ticket", broker=REDIS_URL, backend=REDIS_URL)
 celery_app.conf.timezone = os.getenv("AUTO_SCAN_TZ", "America/Toronto")
@@ -96,8 +115,72 @@ def _release_lock(name, token):
         db.commit()
 
 
+def _renew_lock(name, token, ttl):
+    """Push our claim's expiry back. Returns False if we no longer hold it."""
+    with SessionLocal() as db:
+        result = db.execute(
+            sa_update(TaskLock)
+            .where(TaskLock.name == name, TaskLock.token == token)
+            .values(expires_at=datetime.utcnow() + timedelta(seconds=ttl))
+        )
+        db.commit()
+        return result.rowcount > 0
+
+
+class _Heartbeat(threading.Thread):
+    """Keeps a held lock alive for as long as its holder is actually alive.
+
+    Without this, a lock's TTL has to cover the longest run we can imagine, and a
+    crashed holder blocks everyone for that whole window. With it, the TTL only has
+    to outlive one heartbeat interval.
+    """
+
+    def __init__(self, name, token, ttl):
+        super().__init__(daemon=True)
+        self.name_ = name
+        self.token = token
+        self.ttl = ttl
+        self._stop = threading.Event()
+
+    def run(self):
+        while not self._stop.wait(LOCK_HEARTBEAT_SECONDS):
+            try:
+                if not _renew_lock(self.name_, self.token, self.ttl):
+                    logger.warning("Lock %s is no longer ours; stopping its heartbeat.", self.name_)
+                    return
+            except Exception as exc:
+                logger.warning("Could not refresh lock %s: %s", self.name_, exc)
+
+    def stop(self):
+        self._stop.set()
+
+
+def _acquire(key, token, ttl, wait_seconds, on_wait):
+    """Take `key`, waiting up to `wait_seconds` for whoever holds it to finish."""
+    deadline = time.monotonic() + max(wait_seconds, 0)
+    next_notice = time.monotonic()
+
+    while True:
+        try:
+            if _try_acquire_lock(key, token, ttl):
+                return True
+        except Exception as exc:
+            logger.error("Could not reach the lock table for %s (%s); skipping to stay safe.", key, exc)
+            return False
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+
+        if on_wait and time.monotonic() >= next_notice:
+            on_wait(int(remaining))
+            next_notice = time.monotonic() + BUSY_NOTICE_SECONDS
+
+        time.sleep(min(BUSY_POLL_SECONDS, remaining))
+
+
 @contextmanager
-def _user_lock(name, ttl):
+def _user_lock(name, ttl, wait_seconds=0, on_wait=None):
     """Cross-process lock so one user never gets two concurrent runs.
 
     Backed by the database, which every deployment has — the cron-job architecture
@@ -106,26 +189,58 @@ def _user_lock(name, ttl):
     read the same Airtable candidates and file duplicate tickets, because a session
     is only marked "GN Ticket Requested" after its ticket is submitted.
 
-    Fails closed: if the lock cannot be taken, the work is skipped rather than run
-    unprotected. A database that cannot serve this cannot serve the scan either.
+    With wait_seconds > 0 a busy lock is waited on rather than skipped, calling
+    on_wait(seconds_left) occasionally so the caller can say so. Fails closed: a
+    lock that cannot be taken means the work is skipped, never run unprotected.
     """
     key = f"gn:lock:{name}"
     token = uuid.uuid4().hex
 
-    try:
-        acquired = _try_acquire_lock(key, token, ttl)
-    except Exception as exc:
-        logger.error("Could not reach the lock table for %s (%s); skipping to stay safe.", key, exc)
-        acquired = False
+    acquired = _acquire(key, token, ttl, wait_seconds, on_wait)
+    heartbeat = None
+    if acquired:
+        heartbeat = _Heartbeat(key, token, ttl)
+        heartbeat.start()
 
     try:
         yield acquired
     finally:
+        if heartbeat:
+            heartbeat.stop()
         if acquired:
             try:
                 _release_lock(key, token)
             except Exception as exc:
                 logger.warning("Could not release lock %s: %s; it expires on its own.", key, exc)
+
+
+@contextmanager
+def booking_slot(wait_seconds=None, on_wait=None):
+    """The single browser slot. Held only while Chrome is actually running."""
+    if wait_seconds is None:
+        wait_seconds = BUSY_MAX_WAIT_SECONDS
+    with _user_lock(BOOKING_SLOT, LOCK_TTL, wait_seconds=wait_seconds, on_wait=on_wait) as acquired:
+        yield acquired
+
+
+def booking_in_progress():
+    """When a booking run is under way, since when. None when the slot is free."""
+    with SessionLocal() as db:
+        row = db.execute(
+            select(TaskLock).where(
+                TaskLock.name == f"gn:lock:{BOOKING_SLOT}",
+                TaskLock.expires_at > datetime.utcnow(),
+            )
+        ).scalars().first()
+        return row.acquired_at if row else None
+
+
+def busy_notice(seconds_left):
+    """The message a waiting run reports while the slot is taken."""
+    minutes = max(int(seconds_left), 0) // 60
+    left = f"{minutes} more min" if minutes else "under a minute"
+    return ("Another booking run is in progress. Waiting for it to finish, then this one "
+            f"starts automatically — giving up after {left}.")
 
 
 def _session_to_dict(session):
@@ -404,20 +519,34 @@ def _book_sessions(user_email, session_ids):
 
     gn_ticket.set_progress_callback(lambda *args, **kwargs: None)
 
-    booking_results = gn_ticket.gn_ticket_handler(
-        send_to_gn,
-        user_email,
-        profile.get("servicenow_password"),
-        "connectednorth@takingitglobal.org",
-        None,
-        profile.get("airtable_api_key"),
-        profile.get("totp_secret"),
-        headless_mode=True,
-        allow_manual_site_selection=False,
-        chatgpt_api_key=os.getenv("CHATGPT_API_KEY"),
-        buffer_before=buffer_before,
-        buffer_after=buffer_after,
-    )
+    # Take the browser slot only now: the Airtable reads and conflict re-check above
+    # do not need it, and holding it for them would make everyone else wait longer.
+    def announce(seconds_left):
+        logger.info("%s (%s)", busy_notice(seconds_left), user_email)
+
+    with booking_slot(on_wait=announce) as slot:
+        if not slot:
+            logger.warning(
+                "Browser slot still busy after %d min for %s. Leaving these %d session(s) "
+                "for the next run — nothing is lost, they stay unbooked in Airtable.",
+                BUSY_MAX_WAIT_SECONDS // 60, user_email, len(send_to_gn),
+            )
+            return
+
+        booking_results = gn_ticket.gn_ticket_handler(
+            send_to_gn,
+            user_email,
+            profile.get("servicenow_password"),
+            "connectednorth@takingitglobal.org",
+            None,
+            profile.get("airtable_api_key"),
+            profile.get("totp_secret"),
+            headless_mode=True,
+            allow_manual_site_selection=False,
+            chatgpt_api_key=os.getenv("CHATGPT_API_KEY"),
+            buffer_before=buffer_before,
+            buffer_after=buffer_after,
+        )
 
     successful = booking_results.get("successful_sessions", [])
     failed = booking_results.get("failed_sessions", [])

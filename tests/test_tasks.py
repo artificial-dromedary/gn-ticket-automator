@@ -1,6 +1,9 @@
 """Automated scan/book behaviour: clean sessions get booked even when others conflict."""
 from datetime import datetime, timedelta, timezone
 
+import threading
+import time
+
 import pytest
 
 import tasks
@@ -297,3 +300,91 @@ def test_the_lock_fails_closed_when_the_table_is_unreachable(monkeypatch, wired)
 
     tasks.scan_user(USER_EMAIL)
     assert wired["booked_ids"] == []
+
+
+def test_only_one_booking_run_holds_the_slot(wired):
+    """Chrome is the memory ceiling: two concurrent runs is how one gets killed."""
+    with tasks.booking_slot(wait_seconds=0) as first:
+        with tasks.booking_slot(wait_seconds=0) as second:
+            assert first is True
+            assert second is False
+
+
+def test_a_busy_slot_is_waited_for_not_failed(monkeypatch, wired):
+    """The waiter should queue and then get in, rather than give up."""
+    monkeypatch.setattr(tasks, "BUSY_POLL_SECONDS", 0.01)
+    notices = []
+
+    holder = tasks.booking_slot(wait_seconds=0)
+    assert holder.__enter__() is True
+
+    def release_shortly():
+        time.sleep(0.05)
+        holder.__exit__(None, None, None)
+
+    threading.Thread(target=release_shortly).start()
+
+    with tasks.booking_slot(wait_seconds=5, on_wait=lambda s: notices.append(s)) as got:
+        assert got is True, "waiter should have been let in once the slot freed"
+
+    assert notices, "the waiter should have announced that it was waiting"
+
+
+def test_a_waiter_gives_up_after_its_deadline(monkeypatch, wired):
+    monkeypatch.setattr(tasks, "BUSY_POLL_SECONDS", 0.01)
+
+    with tasks.booking_slot(wait_seconds=0):
+        with tasks.booking_slot(wait_seconds=0.05) as second:
+            assert second is False
+
+
+def test_booking_in_progress_reports_the_slot(wired):
+    assert tasks.booking_in_progress() is None
+    with tasks.booking_slot(wait_seconds=0):
+        assert tasks.booking_in_progress() is not None
+    assert tasks.booking_in_progress() is None
+
+
+def test_a_dead_holder_frees_the_slot_by_expiry(wired):
+    """A run killed for memory must not wedge the nightly job until the TTL is long gone."""
+    with tasks.booking_slot(wait_seconds=0):
+        with SessionLocal() as db:
+            lock = db.execute(select(TaskLock)).scalars().one()
+            lock.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            db.commit()
+
+        with tasks.booking_slot(wait_seconds=0) as taken_over:
+            assert taken_over is True
+
+
+def test_a_heartbeat_keeps_a_live_holder_from_expiring(wired):
+    """The other half of that: a holder still working must not lose its slot."""
+    with tasks.booking_slot(wait_seconds=0):
+        with SessionLocal() as db:
+            lock = db.execute(select(TaskLock)).scalars().one()
+            key, token = lock.name, lock.token
+            lock.expires_at = datetime.utcnow() + timedelta(seconds=1)
+            db.commit()
+
+        assert tasks._renew_lock(key, token, 600) is True
+
+        with SessionLocal() as db:
+            refreshed = db.execute(select(TaskLock)).scalars().one()
+        assert refreshed.expires_at > datetime.utcnow() + timedelta(seconds=300)
+
+
+def test_renewing_a_lock_we_no_longer_hold_reports_failure(wired):
+    assert tasks._renew_lock("gn:lock:nobody-holds-this", "sometoken", 60) is False
+
+
+def test_a_booking_that_cannot_get_the_slot_books_nothing(monkeypatch, wired):
+    """Blocked means postponed, not partially done."""
+    monkeypatch.setattr(tasks.gn_ticket, "gn_ticket_handler",
+                        lambda *a, **k: pytest.fail("must not drive Chrome without the slot"))
+    monkeypatch.setattr(tasks, "BUSY_MAX_WAIT_SECONDS", 0)
+
+    with tasks.booking_slot(wait_seconds=0):
+        tasks.book_sessions(USER_EMAIL, ["recClean1", "recClean2"])
+
+    # Nothing recorded, nothing emailed: the sessions are untouched for the next run.
+    assert wired["summary_emails"] == []
