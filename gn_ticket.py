@@ -81,6 +81,89 @@ def generate_totp_token(secret):
         raise
 
 
+def _env_flag(name, default):
+    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes")
+
+
+def build_chrome_options(headless_mode=True):
+    """Chrome options tuned to survive a small container.
+
+    Headless Chrome loading a heavy enterprise page is by far the largest thing this
+    process does, and on a 512 MB instance it is what gets the container OOM-killed.
+    The savings here, roughly in order of size:
+
+      * viewport — raster buffers scale with area, so 1280x720 costs under half of
+        1920x1080 and nothing in this flow depends on the larger canvas;
+      * images — the ticket form is filled by locator, never looked at, so decoded
+        bitmaps are pure overhead;
+      * V8 heap ceiling — caps the JS heap, so a runaway page fails as a renderer
+        error we can see instead of taking the whole container down with it;
+      * background subsystems — sync, translate, metrics, crash reporting and
+        component updates all allocate and none are wanted here.
+
+    Every lever is environment-tunable so a too-tight setting is a dashboard edit
+    rather than a redeploy.
+    """
+    options = webdriver.ChromeOptions()
+
+    if headless_mode:
+        options.add_argument("--headless")
+
+    # Required in a container.
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+
+    options.add_argument(f"--window-size={os.getenv('CHROME_WINDOW_SIZE', '1280,720')}")
+
+    if headless_mode and _env_flag("CHROME_DISABLE_IMAGES", True):
+        options.add_argument("--blink-settings=imagesEnabled=false")
+
+    js_heap_mb = os.getenv("CHROME_JS_HEAP_MB", "256").strip()
+    if js_heap_mb and js_heap_mb != "0":
+        options.add_argument(f"--js-flags=--max-old-space-size={js_heap_mb}")
+
+    # Caches buy nothing across a single short run and cost resident memory.
+    options.add_argument("--disk-cache-size=1")
+    options.add_argument("--media-cache-size=1")
+    options.add_argument("--renderer-process-limit=1")
+
+    for flag in (
+        "--disable-extensions",
+        "--disable-plugins",
+        "--disable-background-networking",
+        "--disable-component-update",
+        "--disable-client-side-phishing-detection",
+        "--disable-sync",
+        "--disable-translate",
+        "--disable-default-apps",
+        "--disable-domain-reliability",
+        "--disable-breakpad",
+        "--disable-hang-monitor",
+        "--disable-prompt-on-repost",
+        "--metrics-recording-only",
+        "--mute-audio",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ):
+        options.add_argument(flag)
+
+    # Last resort: runs the renderer inside the browser process, saving the per-process
+    # overhead at the cost of stability. Off by default — Chrome does not support it.
+    if _env_flag("CHROME_SINGLE_PROCESS", False):
+        options.add_argument("--single-process")
+
+    options.add_argument("--log-level=3")
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    options.add_experimental_option("useAutomationExtension", False)
+
+    options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+    return options
+
+
 def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_session_id=None, airtable_api_key=None,
                       totp_secret=None, headless_mode=True, chatgpt_api_key=None, allow_manual_site_selection=False,
                       buffer_before=10, buffer_after=10):
@@ -112,32 +195,8 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
     browser_mode_msg = "headless mode" if headless_mode else "visible browser mode"
     set_progress(progress_session_id, f"Setting up Chrome browser in {browser_mode_msg}...", 1, 8)
 
-    # Set up Chrome options
-    options = webdriver.ChromeOptions()
+    options = build_chrome_options(headless_mode)
 
-    if headless_mode:
-        # Enable headless mode
-        options.add_argument("--headless")
-
-    # Recommended options for better stability (apply regardless of headless mode)
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-plugins")
-
-    # Optional: Reduce logging noise
-    options.add_argument("--log-level=3")
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
-    options.add_experimental_option('useAutomationExtension', False)
-
-    # Optional: Set user agent to avoid detection
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
-    # In a container the browser and driver are installed at fixed paths; locally these
-    # are unset and Selenium Manager resolves them itself.
     chrome_binary = os.getenv("CHROME_BINARY")
     if chrome_binary:
         options.binary_location = chrome_binary
