@@ -13,7 +13,6 @@ from pathlib import Path
 import logging
 import jwt
 import uuid
-import redis
 from sqlalchemy import select
 
 RUN_ID = uuid.uuid4().hex
@@ -98,6 +97,7 @@ else:
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 from flask_session import Session
+from flask_sqlalchemy import SQLAlchemy
 import gn_ticket
 from user_profiles import user_manager
 from airtable_integration import create_airtable_client
@@ -106,7 +106,7 @@ from ticket_submission_log import TicketSubmissionLog
 from google_auth_oauthlib.flow import Flow
 from collections import deque
 from conflict import check_for_time_conflicts
-from db import SessionLocal
+from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
 from tasks import auto_scan_time_label, dispatch_scan
 
@@ -145,14 +145,24 @@ def load_config_from_env():
 if not env_loaded:
     logging.error("Failed to load .env file. Please ensure it exists and is accessible.")
 
-# Session configuration
+# Session configuration. Sessions live in the database, not on disk: the container
+# filesystem is ephemeral, so a filesystem store signs everyone out on every deploy.
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-redis_url = os.getenv("REDIS_URL")
-if redis_url:
-    app.config['SESSION_TYPE'] = 'redis'
-    app.config['SESSION_REDIS'] = redis.from_url(redis_url)
-else:
-    app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    # This engine only carries session reads and writes; db.py has its own pool for
+    # application queries. Keep it small so the two together stay well inside the
+    # connection limit of a small Postgres instance.
+    'pool_size': 2,
+    'max_overflow': 3,
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+}
+app.config['SESSION_TYPE'] = 'sqlalchemy'
+app.config['SESSION_SQLALCHEMY'] = SQLAlchemy(app)
+app.config['SESSION_SQLALCHEMY_TABLE'] = 'flask_sessions'
+# SQL has no TTL, so expired rows are pruned on roughly every Nth request.
+app.config['SESSION_CLEANUP_N_REQUESTS'] = 200
 Session(app)
 
 CONFIG, CONFIG_VALID = load_config_from_env()
