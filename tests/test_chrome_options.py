@@ -16,7 +16,8 @@ def args(**env):
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
     for name in ("CHROME_WINDOW_SIZE", "CHROME_DISABLE_IMAGES",
-                 "CHROME_JS_HEAP_MB", "CHROME_SINGLE_PROCESS"):
+                 "CHROME_JS_HEAP_MB", "CHROME_SINGLE_PROCESS",
+                 "CHROME_DISABLE_SITE_ISOLATION"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -76,3 +77,20 @@ def test_the_heap_cap_can_be_removed(monkeypatch):
     monkeypatch.setenv("CHROME_JS_HEAP_MB", "0")
 
     assert not any(f.startswith("--js-flags") for f in args())
+
+
+def test_site_isolation_is_off_by_default():
+    """Each isolated origin is its own renderer process; the browser visits one
+    trusted site, so those processes cost memory and guard against nothing."""
+    flags = args()
+
+    assert "--disable-features=IsolateOrigins,site-per-process" in flags
+    assert "--disable-site-isolation-trials" in flags
+
+
+def test_site_isolation_can_be_restored(monkeypatch):
+    monkeypatch.setenv("CHROME_DISABLE_SITE_ISOLATION", "false")
+    flags = args()
+
+    assert "--disable-features=IsolateOrigins,site-per-process" not in flags
+    assert "--disable-site-isolation-trials" not in flags

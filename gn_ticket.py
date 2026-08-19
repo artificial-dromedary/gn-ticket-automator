@@ -128,6 +128,16 @@ def build_chrome_options(headless_mode=True):
     options.add_argument("--media-cache-size=1")
     options.add_argument("--renderer-process-limit=1")
 
+    # Site isolation gives every origin its own renderer process, each with its own
+    # fixed overhead. That is a security boundary against hostile pages; here the
+    # browser visits exactly one trusted site under our own control, so the processes
+    # cost memory and protect against nothing. Collapsing them is the larger win on a
+    # page that pulls in several origins, and unlike --single-process it is a supported
+    # configuration.
+    if _env_flag("CHROME_DISABLE_SITE_ISOLATION", True):
+        options.add_argument("--disable-features=IsolateOrigins,site-per-process")
+        options.add_argument("--disable-site-isolation-trials")
+
     for flag in (
         "--disable-extensions",
         "--disable-plugins",
