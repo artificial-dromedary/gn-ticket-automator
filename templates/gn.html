@@ -355,8 +355,12 @@ document.addEventListener('DOMContentLoaded', function() {
       <div style="margin-top: 10px;">
         <label style="margin-right: 20px;">
           <input type="checkbox" name="auto_booking_enabled" value="yes" {% if auto_booking_enabled %}checked{% endif %}>
-          Enable hourly auto-booking
+          Enable daily auto-booking
         </label>
+        <span style="color: #555; font-size: 0.9em;">
+          Runs every day at {{ auto_scan_time }}. Sessions with no conflicts are booked automatically;
+          anything with a conflict is emailed to you instead.
+        </span>
       </div>
       <div style="margin-top: 10px;">
         <label style="margin-right: 10px;">
@@ -382,6 +386,25 @@ document.addEventListener('DOMContentLoaded', function() {
         <button type="submit">Save settings</button>
         <button type="submit" formaction="/auto/run" style="margin-left: 10px;">Run auto scan now</button>
       </div>
+      {% if booking_busy_since %}
+      <div style="margin-top: 12px; padding: 10px 12px; background: #fff6e0; border: 1px solid #e6c682; border-radius: 4px; font-size: 0.9em;">
+        <strong>A booking run is in progress.</strong>
+        Started {{ booking_busy_since.strftime('%H:%M') }} UTC. Only one runs at a time —
+        if you start another it will wait its turn rather than fail.
+      </div>
+      {% endif %}
+      {% if latest_scan %}
+      <div style="margin-top: 12px; font-size: 0.9em; color: #333;">
+        <strong>Last automatic run:</strong>
+        {{ latest_scan.scanned_at or 'unknown' }} &middot;
+        {{ latest_scan.candidates or 0 }} candidate(s),
+        {{ latest_scan.clean or 0 }} without conflicts,
+        {{ latest_scan.conflicts or 0 }} conflicted
+        {% if latest_scan.booked is defined %}
+          &middot; booked {{ latest_scan.booked }}{% if latest_scan.failed %}, {{ latest_scan.failed }} failed{% endif %}
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
   </form>
 </div>

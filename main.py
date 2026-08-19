@@ -13,7 +13,6 @@ from pathlib import Path
 import logging
 import jwt
 import uuid
-import redis
 from sqlalchemy import select
 
 RUN_ID = uuid.uuid4().hex
@@ -98,6 +97,7 @@ else:
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 from flask_session import Session
+from flask_sqlalchemy import SQLAlchemy
 import gn_ticket
 from user_profiles import user_manager
 from airtable_integration import create_airtable_client
@@ -106,9 +106,9 @@ from ticket_submission_log import TicketSubmissionLog
 from google_auth_oauthlib.flow import Flow
 from collections import deque
 from conflict import check_for_time_conflicts
-from db import SessionLocal
+from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
-from tasks import scan_user
+from tasks import auto_scan_time_label, booking_in_progress, booking_slot, busy_notice, dispatch_scan
 
 # Global progress storage. Each session keeps a deque of the most recent entries
 # (up to 50) along with a monotonically increasing sequence counter.
@@ -145,14 +145,24 @@ def load_config_from_env():
 if not env_loaded:
     logging.error("Failed to load .env file. Please ensure it exists and is accessible.")
 
-# Session configuration
+# Session configuration. Sessions live in the database, not on disk: the container
+# filesystem is ephemeral, so a filesystem store signs everyone out on every deploy.
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-redis_url = os.getenv("REDIS_URL")
-if redis_url:
-    app.config['SESSION_TYPE'] = 'redis'
-    app.config['SESSION_REDIS'] = redis.from_url(redis_url)
-else:
-    app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    # This engine only carries session reads and writes; db.py has its own pool for
+    # application queries. Keep it small so the two together stay well inside the
+    # connection limit of a small Postgres instance.
+    'pool_size': 2,
+    'max_overflow': 3,
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+}
+app.config['SESSION_TYPE'] = 'sqlalchemy'
+app.config['SESSION_SQLALCHEMY'] = SQLAlchemy(app)
+app.config['SESSION_SQLALCHEMY_TABLE'] = 'flask_sessions'
+# SQL has no TTL, so expired rows are pruned on roughly every Nth request.
+app.config['SESSION_CLEANUP_N_REQUESTS'] = 200
 Session(app)
 
 CONFIG, CONFIG_VALID = load_config_from_env()
@@ -386,6 +396,7 @@ def gn_ticket_page():
         session['book_session_ids'] = [s.s_id for s in candidate_sessions]
 
         latest_conflicts = []
+        latest_scan = None
         emailed_conflict_ids = set()
         with SessionLocal() as db:
             db_user = db.execute(
@@ -402,6 +413,12 @@ def gn_ticket_page():
                         latest_conflicts = json.loads(scan.conflicts_json)
                     except (TypeError, json.JSONDecodeError):
                         latest_conflicts = []
+                if scan:
+                    try:
+                        latest_scan = json.loads(scan.summary) if scan.summary else {}
+                    except (TypeError, json.JSONDecodeError):
+                        latest_scan = {}
+                    latest_scan['scanned_at'] = scan.scanned_at.isoformat() if scan.scanned_at else None
 
                 email_rows = db.execute(
                     select(ConflictEmailLog)
@@ -421,6 +438,9 @@ def gn_ticket_page():
             window_past_days=window_past_days,
             window_future_days=window_future_days,
             auto_booking_enabled=auto_booking_enabled,
+            auto_scan_time=auto_scan_time_label(),
+            latest_scan=latest_scan,
+            booking_busy_since=booking_in_progress(),
         )
     except Exception as e:
         logging.error(f"Error loading sessions: {e}", exc_info=True)
@@ -472,20 +492,35 @@ def do_gn_ticket():
 
     def run_booking():
         try:
-            booking_results = gn_ticket.gn_ticket_handler(
-                send_to_gn,
-                user['email'],
-                profile.get('servicenow_password'),
-                "connectednorth@takingitglobal.org",
-                progress_session_id,
-                profile.get('airtable_api_key'),
-                profile.get('totp_secret'),
-                headless_mode=headless_mode_enabled,  # This will control browser visibility
-                allow_manual_site_selection=True,  # Explicitly enable manual intervention
-                chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY'),
-                buffer_before=buffer_before,
-                buffer_after=buffer_after
-            )
+            # One browser at a time across the whole service. Two at once is how a run
+            # gets killed for memory, so a busy service queues instead of failing.
+            def announce(seconds_left):
+                set_progress(progress_session_id, busy_notice(seconds_left), status="waiting")
+
+            with booking_slot(on_wait=announce) as slot:
+                if not slot:
+                    set_progress(
+                        progress_session_id,
+                        "Another booking run is still going after a long wait. Nothing was "
+                        "booked — these sessions are untouched, so try again shortly.",
+                        status="error",
+                    )
+                    return
+
+                booking_results = gn_ticket.gn_ticket_handler(
+                    send_to_gn,
+                    user['email'],
+                    profile.get('servicenow_password'),
+                    "connectednorth@takingitglobal.org",
+                    progress_session_id,
+                    profile.get('airtable_api_key'),
+                    profile.get('totp_secret'),
+                    headless_mode=headless_mode_enabled,  # This will control browser visibility
+                    allow_manual_site_selection=True,  # Explicitly enable manual intervention
+                    chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY'),
+                    buffer_before=buffer_before,
+                    buffer_after=buffer_after
+                )
             ticket_log.add_successful_submissions(user['email'], booking_results.get('successful_sessions', []))
         except Exception as e:
             set_progress(progress_session_id, f"Critical error during booking: {str(e)}", status="error")
@@ -645,7 +680,9 @@ def update_preferences():
 @require_auth
 def run_auto_scan_now():
     user = session['user']
-    scan_user.delay(user['email'])
+    # Runs in a thread so the request returns immediately whether the scan is being
+    # enqueued to a worker or executed inline (the no-broker cron deployment).
+    threading.Thread(target=dispatch_scan, args=(user['email'],), daemon=True).start()
     return redirect(url_for('gn_ticket_page'))
 
 

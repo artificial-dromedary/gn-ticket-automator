@@ -12,6 +12,7 @@ import logging
 import requests
 from pytz import timezone
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.common.exceptions import TimeoutException, ElementNotInteractableException, \
     StaleElementReferenceException, NoSuchElementException, ElementClickInterceptedException
 from selenium.webdriver.common.by import By
@@ -135,9 +136,19 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
+    # In a container the browser and driver are installed at fixed paths; locally these
+    # are unset and Selenium Manager resolves them itself.
+    chrome_binary = os.getenv("CHROME_BINARY")
+    if chrome_binary:
+        options.binary_location = chrome_binary
+
+    chromedriver_path = os.getenv("CHROMEDRIVER")
+    service = ChromeService(executable_path=chromedriver_path) if chromedriver_path else None
+
     # Start the webdriver
     try:
-        driver = webdriver.Chrome(options=options)
+        driver = webdriver.Chrome(options=options, service=service) if service \
+            else webdriver.Chrome(options=options)
     except Exception as e:
         logging.error("Failed to start Chrome webdriver", exc_info=True)
         set_progress(progress_session_id, f"❌ Failed to start Chrome browser: {e}", 1, 8, "error")

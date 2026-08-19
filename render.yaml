@@ -1,126 +1,86 @@
-services:
-  - type: redis
-    name: gn-ticket-redis
-    plan: starter
+# Cron-job architecture: one web service for the dashboard and one scheduled job that
+# does the daily scan and booking. No Redis and no long-running worker — the scan is a
+# short daily process, and Render bills cron jobs per minute of execution.
+#
+# The Celery task definitions in tasks.py are still present and still work. Setting
+# GN_INLINE_TASKS=1 makes them run in-process instead of being enqueued, so a future
+# move to a worker + beat deployment is a configuration change, not a rewrite.
 
+envVarGroups:
+  - name: gn-ticket-shared
+    envVars:
+      # Encrypts every stored Airtable key, ServiceNow password and 2FA secret.
+      # Generate once; losing it means every user redoes the setup wizard.
+      - key: APP_ENCRYPTION_KEY
+        generateValue: true
+      - key: GN_INLINE_TASKS
+        value: "1"
+      - key: AUTO_SCAN_TZ
+        value: America/Toronto
+      - key: AUTO_SCAN_HOUR
+        value: "6"
+      - key: AUTO_SCAN_MINUTE
+        value: "0"
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: CHATGPT_API_KEY
+        sync: false
+
+services:
   - type: web
     name: gn-ticket-web
-    env: python
+    runtime: docker
     plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app
+    dockerfilePath: ./Dockerfile
+    # Manual booking drives Chrome inside this process. Measured peak is ~355 MB of the
+    # 512 MB a starter instance gets, so one browser fits and a second would not.
+    dockerCommand: gunicorn main:app --bind 0.0.0.0:$PORT --timeout 120 --graceful-timeout 120 --workers 1 --threads 2
+    healthCheckPath: /
     envVars:
+      - fromGroup: gn-ticket-shared
       - key: DATABASE_URL
         fromDatabase:
           name: gn-ticket-db
           property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: gn-ticket-redis
-          type: redis
-          property: connectionString
-      - key: APP_ENCRYPTION_KEY
-        sync: false
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: SMTP_FROM
-        sync: false
+      - key: DISABLE_UPDATES
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: OAUTH_REDIRECT_URI
-        sync: false
-      - key: SECRET_KEY
-        sync: false
-      - key: CHATGPT_API_KEY
         sync: false
 
-  - type: worker
-    name: gn-ticket-worker
-    env: python
-    plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A tasks.celery_app worker -l info
+  - type: cron
+    name: gn-ticket-scan
+    runtime: docker
+    # 2 GB, so Chrome has room. Cron jobs bill per minute of execution, so the larger
+    # instance costs cents per month at one short run per day.
+    plan: standard
+    dockerfilePath: ./Dockerfile
+    # NOTE: Render cron schedules are UTC and do not follow daylight saving. 10:00 UTC is
+    # 06:00 in Toronto during EDT and 05:00 during EST. For an overnight job that drift is
+    # harmless; if the exact local hour matters, adjust this twice a year.
+    schedule: "0 10 * * *"
+    dockerCommand: python run_scan.py
     envVars:
+      - fromGroup: gn-ticket-shared
       - key: DATABASE_URL
         fromDatabase:
           name: gn-ticket-db
           property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: gn-ticket-redis
-          type: redis
-          property: connectionString
-      - key: APP_ENCRYPTION_KEY
-        sync: false
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: SMTP_FROM
-        sync: false
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
-      - key: OAUTH_REDIRECT_URI
-        sync: false
-      - key: SECRET_KEY
-        sync: false
-      - key: CHATGPT_API_KEY
-        sync: false
-
-  - type: worker
-    name: gn-ticket-beat
-    env: python
-    plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A tasks.celery_app beat -l info
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: gn-ticket-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: gn-ticket-redis
-          type: redis
-          property: connectionString
-      - key: APP_ENCRYPTION_KEY
-        sync: false
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: SMTP_FROM
-        sync: false
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
-      - key: OAUTH_REDIRECT_URI
-        sync: false
-      - key: SECRET_KEY
-        sync: false
-      - key: CHATGPT_API_KEY
-        sync: false
 
 databases:
   - name: gn-ticket-db
-    plan: starter
+    plan: basic-256mb
     databaseName: gn_ticket
