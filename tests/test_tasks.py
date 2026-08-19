@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import tasks
-from models import ConflictEmailLog, ScanResult, User
+from models import ConflictEmailLog, ScanResult, TaskLock, User
 from db import SessionLocal
 from sqlalchemy import select
 from user_profiles import user_manager
@@ -239,48 +239,61 @@ def test_run_scheduled_scan_only_enqueues_opted_in_users(monkeypatch, registered
     assert enqueued == [USER_EMAIL]
 
 
-class FakeRedis:
-    """Just enough of the redis client for the SET NX EX lock."""
-
-    def __init__(self):
-        self.store = {}
-
-    def set(self, key, value, nx=False, ex=None):
-        if nx and key in self.store:
-            return False
-        self.store[key] = value.encode() if isinstance(value, str) else value
-        return True
-
-    def get(self, key):
-        return self.store.get(key)
-
-    def delete(self, key):
-        self.store.pop(key, None)
+def test_lock_stops_a_second_run_while_one_is_in_flight(wired):
+    """The guard against two booking runs filing duplicate tickets for one session."""
+    with tasks._user_lock("book:someone@example.org", 60) as first:
+        with tasks._user_lock("book:someone@example.org", 60) as second:
+            assert first is True
+            assert second is False
 
 
-def test_lock_stops_a_second_run_while_one_is_in_flight(monkeypatch, wired):
-    fake = FakeRedis()
-    monkeypatch.setattr(tasks.redis.Redis, "from_url", staticmethod(lambda url: fake))
+def test_different_users_do_not_block_each_other(wired):
+    with tasks._user_lock("book:one@example.org", 60) as first:
+        with tasks._user_lock("book:two@example.org", 60) as second:
+            assert first is True
+            assert second is True
 
-    def scan_again_from_inside(*args, **kwargs):
-        # Simulates the scheduled run firing while "Run auto scan now" is still going.
+
+def test_lock_is_released_after_a_run(wired):
+    with tasks._user_lock("book:someone@example.org", 60) as first:
+        assert first is True
+    with tasks._user_lock("book:someone@example.org", 60) as second:
+        assert second is True
+
+    with SessionLocal() as db:
+        assert db.execute(select(TaskLock)).scalars().all() == []
+
+
+def test_an_expired_lock_is_reclaimed(wired):
+    """A process killed mid-booking must not block its user forever."""
+    with tasks._user_lock("book:someone@example.org", 60):
+        with SessionLocal() as db:
+            lock = db.execute(select(TaskLock)).scalars().one()
+            lock.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            db.commit()
+
+        with tasks._user_lock("book:someone@example.org", 60) as reclaimed:
+            assert reclaimed is True
+
+
+def test_a_locked_out_scan_does_no_work(monkeypatch, wired):
+    """Being locked out must skip the run, not run it unprotected."""
+    monkeypatch.setattr(tasks, "_scan_user",
+                        lambda email: pytest.fail("locked-out scan must not run"))
+
+    with tasks._user_lock(f"scan:{USER_EMAIL}", 60):
         tasks.scan_user(USER_EMAIL)
-        return []
-
-    monkeypatch.setattr(tasks, "_annotate_conflicts", scan_again_from_inside)
-
-    tasks.scan_user(USER_EMAIL)
-
-    # The re-entrant call was locked out, so Airtable was queried exactly once.
-    assert wired["airtable"].booked_calls == 1
 
 
-def test_lock_is_released_after_a_run(monkeypatch, wired):
-    fake = FakeRedis()
-    monkeypatch.setattr(tasks.redis.Redis, "from_url", staticmethod(lambda url: fake))
+def test_the_lock_fails_closed_when_the_table_is_unreachable(monkeypatch, wired):
+    """A lock that cannot be taken skips the work rather than running unguarded."""
+    def unreachable(*args, **kwargs):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(tasks, "_try_acquire_lock", unreachable)
+
+    with tasks._user_lock("book:someone@example.org", 60) as acquired:
+        assert acquired is False
 
     tasks.scan_user(USER_EMAIL)
-    tasks.scan_user(USER_EMAIL)
-
-    assert wired["airtable"].booked_calls == 2
-    assert fake.store == {}
+    assert wired["booked_ids"] == []

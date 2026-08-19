@@ -3,19 +3,19 @@ import logging
 import os
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-import redis
 from celery import Celery
 from celery.schedules import crontab
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from airtable_integration import create_airtable_client
 from conflict import check_for_time_conflicts
 from db import SessionLocal
 from emailer import send_booking_summary_email, send_conflict_email
-from models import ConflictEmailLog, ScanResult, User
+from models import ConflictEmailLog, ScanResult, TaskLock, User
 from ticket_submission_log import TicketSubmissionLog
 from user_profiles import user_manager
 import gn_ticket
@@ -63,34 +63,69 @@ def auto_scan_time_label():
     return f"{hour:02d}:{minute:02d} {celery_app.conf.timezone}"
 
 
+def _try_acquire_lock(name, token, ttl):
+    """Claim `name` for `token`, or return False if someone else holds it.
+
+    The unique constraint on TaskLock.name is what makes this atomic: two racing
+    callers both attempt the insert and the database rejects one of them.
+    """
+    now = datetime.utcnow()
+    with SessionLocal() as db:
+        # Reclaim a lock whose holder died before releasing it.
+        db.execute(sa_delete(TaskLock).where(TaskLock.name == name, TaskLock.expires_at <= now))
+        db.commit()
+
+        db.add(TaskLock(
+            name=name,
+            token=token,
+            acquired_at=now,
+            expires_at=now + timedelta(seconds=ttl),
+        ))
+        try:
+            db.commit()
+            return True
+        except IntegrityError:
+            db.rollback()
+            return False
+
+
+def _release_lock(name, token):
+    """Release only our own claim, never one a later run took over."""
+    with SessionLocal() as db:
+        db.execute(sa_delete(TaskLock).where(TaskLock.name == name, TaskLock.token == token))
+        db.commit()
+
+
 @contextmanager
 def _user_lock(name, ttl):
-    """Best-effort cross-process lock so one user never gets two concurrent runs.
+    """Cross-process lock so one user never gets two concurrent runs.
 
-    If Redis is unreachable the work is allowed through — the broker would be down
-    too, so this only matters for direct/local invocations.
+    Backed by the database, which every deployment has — the cron-job architecture
+    runs without a broker, so a Redis-backed lock there would grant unconditionally
+    and quietly stop being a lock at all. Two overlapping booking runs would each
+    read the same Airtable candidates and file duplicate tickets, because a session
+    is only marked "GN Ticket Requested" after its ticket is submitted.
+
+    Fails closed: if the lock cannot be taken, the work is skipped rather than run
+    unprotected. A database that cannot serve this cannot serve the scan either.
     """
     key = f"gn:lock:{name}"
     token = uuid.uuid4().hex
-    client = None
-    acquired = True
 
     try:
-        client = redis.Redis.from_url(REDIS_URL)
-        acquired = bool(client.set(key, token, nx=True, ex=ttl))
+        acquired = _try_acquire_lock(key, token, ttl)
     except Exception as exc:
-        logger.warning("Lock unavailable for %s (%s); proceeding without it.", key, exc)
-        client = None
+        logger.error("Could not reach the lock table for %s (%s); skipping to stay safe.", key, exc)
+        acquired = False
 
     try:
         yield acquired
     finally:
-        if client is not None and acquired:
+        if acquired:
             try:
-                if client.get(key) == token.encode():
-                    client.delete(key)
+                _release_lock(key, token)
             except Exception as exc:
-                logger.warning("Could not release lock %s: %s", key, exc)
+                logger.warning("Could not release lock %s: %s; it expires on its own.", key, exc)
 
 
 def _session_to_dict(session):

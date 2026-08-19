@@ -77,6 +77,23 @@ class ConflictEmailLog(Base):
     emailed_at = Column(DateTime, default=utcnow)
 
 
+class TaskLock(Base):
+    """Cross-process mutex.
+
+    Lives in the database rather than Redis so it holds in every deployment shape —
+    the cron-job architecture has no broker at all, and a lock that silently grants
+    when its backend is missing is worse than no lock, because it reads as one.
+    """
+    __tablename__ = "task_locks"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    token = Column(String(64), nullable=False)
+    acquired_at = Column(DateTime, default=utcnow, nullable=False)
+    # A holder that dies mid-run would otherwise block its user forever.
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
 class ScanResult(Base):
     __tablename__ = "scan_results"
 
