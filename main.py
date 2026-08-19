@@ -260,6 +260,11 @@ def login():
         flow.redirect_uri = get_redirect_uri_for_flow()
         auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
         session['oauth_state'] = state
+        # google-auth-oauthlib generates a PKCE verifier inside authorization_url() and
+        # keeps it on this Flow object. The callback builds a *different* Flow, so the
+        # verifier has to travel through the session or Google rejects the exchange with
+        # "Missing code verifier".
+        session['oauth_code_verifier'] = flow.code_verifier
 
         return render_template("manual_oauth.html", auth_url=auth_url)
 
@@ -275,7 +280,15 @@ def oauth_callback():
         logging.error("OAuth callback missing authorization code")
         return redirect(url_for('login_error'))
 
-    logging.info(f"OAuth callback received with code. Request URL: {request.url}")
+    logging.info("OAuth callback received with code.")
+
+    # Guards against a callback being replayed from somewhere else. A mismatch here
+    # usually means the login URL was opened in a different browser than it was
+    # generated in, which cannot work: the PKCE verifier lives in that browser's session.
+    expected_state = session.get('oauth_state')
+    if not expected_state or request.args.get('state') != expected_state:
+        logging.error("OAuth state mismatch — open the login link in the browser that generated it.")
+        return redirect(url_for('login_error'))
 
     # Create a new flow for the callback
     flow = create_flow()
@@ -283,9 +296,14 @@ def oauth_callback():
         return render_template("oauth_not_configured.html")
 
     flow.redirect_uri = get_redirect_uri_for_flow()
+    # Restore the PKCE verifier this browser started the flow with (see /login).
+    flow.code_verifier = session.get('oauth_code_verifier')
 
     try:
         flow.fetch_token(authorization_response=request.url)
+        # One-time values; they must not be reusable after a successful exchange.
+        session.pop('oauth_state', None)
+        session.pop('oauth_code_verifier', None)
 
         token_payload = jwt.decode(flow.credentials.id_token, options={"verify_signature": False})
         user_info = {
