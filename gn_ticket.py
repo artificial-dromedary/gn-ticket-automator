@@ -479,25 +479,49 @@ def get_all_dropdown_options_from_html(driver, element_id_to_click, results_css_
         return []
 
 
-def ask_chatgpt_for_best_match(dropdown_options, community_name, school_name, api_key=None):
+# The site matcher's model, overridable without a code change — OpenAI retires models
+# on a schedule (gpt-3.5-turbo shuts down 2026-10-23), and a hardcoded ID is how that
+# becomes an outage. Confirm the current ID against OpenAI's model list before changing.
+CHATGPT_MODEL = os.getenv("CHATGPT_MODEL", "gpt-5-mini")
+CHATGPT_TIMEOUT = int(os.getenv("CHATGPT_TIMEOUT", "30"))
+
+
+def _chat_completion_payload(model, prompt, max_output_tokens=100):
+    """Build a request body valid for the given model family.
+
+    The GPT-5 family rejects `temperature` outright and renamed `max_tokens` to
+    `max_completion_tokens`, so a bare model-string swap from a GPT-4-era model
+    returns 400. Branching here keeps CHATGPT_MODEL genuinely swappable.
     """
-    Ask ChatGPT to select the best matching site from dropdown options
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
 
-    Args:
-        dropdown_options: List of available site options from dropdown
-        community_name: Community name from Airtable
-        school_name: School name from Airtable
-        api_key: OpenAI API key
+    if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
+        payload["max_completion_tokens"] = max_output_tokens
+    else:
+        payload["max_tokens"] = max_output_tokens
+        # Near-deterministic: this is a lookup, not a creative task.
+        payload["temperature"] = 0.1
 
-    Returns:
-        Best matching option or None
+    return payload
+
+
+def ask_chatgpt_for_best_match(dropdown_options, community_name, school_name, api_key=None):
+    """Pick the ServiceNow site that matches a school, when string matching could not.
+
+    This is a fallback behind basic_site_match(). Every answer is checked against the
+    options actually offered, so a wrong or invented answer is discarded rather than
+    submitted — the caller falls back to manual site selection.
+
+    Returns the exact option text, or None.
     """
     if not dropdown_options or not api_key:
-        set_progress_func(None, f"DEBUG SITE: ChatGPT skipped (no options or API key).", None, None)
+        set_progress_func(None, "DEBUG SITE: Site matching by model skipped (no options or API key).", None, None)
         return None
 
-    # Prepare the prompt for ChatGPT
-    prompt = f"""You are helping to match a school location to the correct ServiceNow site entry. 
+    prompt = f"""You are helping to match a school location to the correct ServiceNow site entry.
 
 School Information:
 - Community: {community_name}
@@ -508,54 +532,48 @@ Available Site Options from ServiceNow dropdown:
 
 Please select the EXACT text of the most appropriate site option from the list above that best matches this school location. Consider:
 1. Community name matching
-2. School name matching  
+2. School name matching
 3. Geographic proximity
 4. Common abbreviations or variations
 
 Respond with ONLY the exact text of your chosen option, nothing else."""
 
     try:
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json'
-        }
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=_chat_completion_payload(CHATGPT_MODEL, prompt),
+            timeout=CHATGPT_TIMEOUT,
+        )
 
-        data = {
-            'model': 'gpt-3.5-turbo',
-            'messages': [
-                {'role': 'user', 'content': prompt}
-            ],
-            'max_tokens': 100,
-            'temperature': 0.1
-        }
-
-        response = requests.post('https://api.openai.com/v1/chat/completions',
-                                 headers=headers, json=data, timeout=30)
-
-        if response.status_code == 200:
-            result = response.json()
-            suggested_match = result['choices'][0]['message']['content'].strip()
-
-            # Verify the suggestion is actually in our options
-            for option in dropdown_options:
-                if option.strip().lower() == suggested_match.lower():
-                    set_progress_func(None, f"DEBUG SITE: ChatGPT suggested valid option: '{option}'.", None, None)
-                    return option
-
-            set_progress_func(None,
-                              f"DEBUG SITE: ChatGPT suggested '{suggested_match}' but it's not in available options.",
-                              None, None, "warning")
-            print(f"ChatGPT suggested '{suggested_match}' but it's not in available options")
+        if response.status_code != 200:
+            # Logged, not just printed: on the scheduled run nobody is watching stdout,
+            # and a retired model ID surfaces here as a 404 rather than as bad matching.
+            logging.warning("Site matching model %s returned HTTP %s: %s",
+                            CHATGPT_MODEL, response.status_code, response.text[:300])
+            set_progress_func(None, f"DEBUG SITE: Site matching API error: {response.status_code}",
+                              None, None, "error")
             return None
-        else:
-            set_progress_func(None, f"DEBUG SITE: ChatGPT API error: {response.status_code} - {response.text}", None,
-                              None, "error")
-            print(f"ChatGPT API error: {response.status_code}")
-            return None
+
+        suggested_match = response.json()["choices"][0]["message"]["content"].strip()
+
+        for option in dropdown_options:
+            if option.strip().lower() == suggested_match.lower():
+                set_progress_func(None, f"DEBUG SITE: Model suggested valid option: '{option}'.", None, None)
+                return option
+
+        logging.info("Site matching model suggested %r, which is not an available option.", suggested_match)
+        set_progress_func(None,
+                          f"DEBUG SITE: Model suggested '{suggested_match}' but it's not in available options.",
+                          None, None, "warning")
+        return None
 
     except Exception as e:
-        set_progress_func(None, f"DEBUG SITE: Error calling ChatGPT API: {e}", None, None, "error")
-        print(f"Error calling ChatGPT API: {e}")
+        logging.warning("Site matching call failed: %s", e, exc_info=True)
+        set_progress_func(None, f"DEBUG SITE: Error calling site matching API: {e}", None, None, "error")
         return None
 
 
