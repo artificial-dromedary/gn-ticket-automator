@@ -33,6 +33,9 @@ envVarGroups:
         sync: false
       - key: CHATGPT_API_KEY
         sync: false
+      # Optional. Overridable so a model retirement is a dashboard edit, not a deploy.
+      - key: CHATGPT_MODEL
+        value: gpt-5-mini
 
 services:
   - type: web
