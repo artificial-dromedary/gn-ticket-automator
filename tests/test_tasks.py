@@ -15,7 +15,10 @@ from user_profiles import user_manager
 
 
 USER_EMAIL = "lead@takingitglobal.org"
-BASE_TIME = datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc)
+# Relative to now, not a fixed date: candidates have to stay comfortably outside the
+# last-minute window, and a hardcoded date silently walks into it as time passes.
+BASE_TIME = (datetime.now(timezone.utc) + timedelta(days=30)).replace(
+    hour=15, minute=0, second=0, microsecond=0)
 
 
 class FakeSession:
@@ -90,13 +93,15 @@ def registered_user():
 def wired(monkeypatch, registered_user):
     """Patch out Airtable, email and the booking queue; record what each was asked to do."""
     airtable = FakeAirtable()
-    calls = {"booked_ids": [], "conflict_emails": []}
+    calls = {"booked_ids": [], "conflict_emails": [], "manual_flags": []}
 
     monkeypatch.setattr(tasks, "create_airtable_client", lambda key: airtable)
     monkeypatch.setattr(tasks, "send_conflict_email",
                         lambda email, sessions: calls["conflict_emails"].append(list(sessions)))
     monkeypatch.setattr(tasks.book_sessions, "delay",
-                        lambda email, ids: calls["booked_ids"].append(list(ids)))
+                        lambda email, ids, manual=False: (
+                            calls["booked_ids"].append(list(ids)),
+                            calls["manual_flags"].append(manual)))
     calls["airtable"] = airtable
     return calls
 

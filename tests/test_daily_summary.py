@@ -22,8 +22,9 @@ def sent(monkeypatch):
     """Capture the summary instead of mailing it."""
     captured = []
     monkeypatch.setattr(tasks, "send_daily_summary_email",
-                        lambda email, booked, conflicts, date: captured.append(
-                            {"email": email, "booked": booked, "conflicts": conflicts, "date": date}))
+                        lambda email, booked, conflicts, date, excluded_sessions=None: captured.append(
+                            {"email": email, "booked": booked, "conflicts": conflicts, "date": date,
+                             "excluded": list(excluded_sessions or [])}))
     return captured
 
 
@@ -161,7 +162,7 @@ def test_one_users_failure_does_not_stop_the_others(monkeypatch, registered_user
 
     reached = []
 
-    def flaky(email, booked, conflicts, date):
+    def flaky(email, booked, conflicts, date, excluded_sessions=None):
         if email == USER_EMAIL:
             raise RuntimeError("SMTP down")
         reached.append(email)

@@ -120,7 +120,10 @@ def test_conflict_detection_flags_ghost_ticket_overlap():
         }
     ]
 
-    result = check_for_time_conflicts([candidate], [], historical_entries)
+    # Pin the clock well before the session, or the last-minute rule claims it first
+    # and this stops testing ghost-ticket detection at all.
+    result = check_for_time_conflicts([candidate], [], historical_entries,
+                                      now=start - timedelta(days=30))
     assert result[0].is_conflict is True
     assert result[0].conflict_type == 'ghost_ticket'
     assert 'Rebooked/ghost ticket' in result[0].conflict_details

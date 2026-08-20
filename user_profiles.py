@@ -29,6 +29,41 @@ def normalize_scan_frequency(value):
     return hours if hours in SCAN_FREQUENCY_CHOICES else DEFAULT_SCAN_FREQUENCY_HOURS
 
 
+# How far ahead the dashboard looks for candidate sessions. These are the labelled
+# stops on the slider, so the value is always one of them rather than any integer.
+# "Forever" is a decade rather than an unbounded query: Airtable still wants a date,
+# and nothing is booked ten years out.
+LOOKAHEAD_FOREVER_DAYS = 3650
+LOOKAHEAD_STOPS = (
+    (0, "Today"),
+    (7, "7 days"),
+    (10, "10 days"),
+    (14, "14 days"),
+    (30, "30 days"),
+    (60, "60 days"),
+    (90, "90 days"),
+    (LOOKAHEAD_FOREVER_DAYS, "Forever"),
+)
+LOOKAHEAD_DAYS = tuple(days for days, _ in LOOKAHEAD_STOPS)
+DEFAULT_LOOKAHEAD_DAYS = 90
+
+
+def normalize_lookahead(value):
+    """Snap whatever arrived from the slider onto the nearest offered stop."""
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_LOOKAHEAD_DAYS
+    if days in LOOKAHEAD_DAYS:
+        return days
+    # A value from an older preference row, or a hand-edited query string. Round up to
+    # the first stop that still covers it so nothing silently drops out of view.
+    for stop in LOOKAHEAD_DAYS:
+        if days <= stop:
+            return stop
+    return LOOKAHEAD_FOREVER_DAYS
+
+
 def _get_fernet():
     key = os.getenv("APP_ENCRYPTION_KEY", "").strip()
     if not key:
@@ -111,7 +146,8 @@ class UserProfileManager:
         if "window_past_days" in prefs:
             preferences.window_past_days = int(prefs.get("window_past_days") or preferences.window_past_days)
         if "window_future_days" in prefs:
-            preferences.window_future_days = int(prefs.get("window_future_days") or preferences.window_future_days)
+            # Not the `or` fallback used above: "Today" is 0, which is falsy but real.
+            preferences.window_future_days = normalize_lookahead(prefs.get("window_future_days"))
         preferences.updated_at = datetime.utcnow()
 
     def load_profile(self, email):
@@ -136,7 +172,8 @@ class UserProfileManager:
                     "auto_booking_enabled": prefs.auto_booking_enabled if prefs else False,
                     "scan_frequency_hours": (prefs.scan_frequency_hours if prefs else None) or DEFAULT_SCAN_FREQUENCY_HOURS,
                     "window_past_days": prefs.window_past_days if prefs else 14,
-                    "window_future_days": prefs.window_future_days if prefs else 90,
+                    "window_future_days": normalize_lookahead(
+                        prefs.window_future_days if prefs else DEFAULT_LOOKAHEAD_DAYS),
                 }
             }
 
@@ -154,7 +191,7 @@ class UserProfileManager:
                     "auto_booking_enabled": False,
                     "scan_frequency_hours": DEFAULT_SCAN_FREQUENCY_HOURS,
                     "window_past_days": 14,
-                    "window_future_days": 90,
+                    "window_future_days": DEFAULT_LOOKAHEAD_DAYS,
                 }
             return {
                 "buffer_before": prefs.buffer_before,
@@ -162,7 +199,7 @@ class UserProfileManager:
                 "auto_booking_enabled": prefs.auto_booking_enabled,
                 "scan_frequency_hours": prefs.scan_frequency_hours or DEFAULT_SCAN_FREQUENCY_HOURS,
                 "window_past_days": prefs.window_past_days,
-                "window_future_days": prefs.window_future_days,
+                "window_future_days": normalize_lookahead(prefs.window_future_days),
             }
 
     def update_preferences(self, email, prefs):

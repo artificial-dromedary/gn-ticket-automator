@@ -1,19 +1,34 @@
-from datetime import timedelta
+import os
+from datetime import datetime, timedelta, timezone
 from ticket_submission_log import parse_log_start_and_end
 
 
-def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_ticket_entries=None):
+# A ticket filed this close to the session is not something the GN can act on, so
+# filing it is noise rather than a request. These are held back like a conflict and
+# reported to the person, who can still book by hand if it is genuinely worth it.
+LAST_MINUTE_HOURS = int(os.getenv("GN_LAST_MINUTE_HOURS", "12"))
+
+
+def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_ticket_entries=None,
+                             now=None, last_minute_hours=None):
     """
     Checks for conflicts between candidate sessions (new GN ticket requests)
     and previously existing Airtable sessions for the same school.
 
-    Two scenarios are considered:
-    1. Time conflicts against already booked sessions that already have GN tickets.
-    2. Candidate sessions that are booked (but no GN ticket yet) and overlap in time.
+    Three scenarios are considered:
+    1. Sessions starting too soon for the GN to act on the request.
+    2. Time conflicts against already booked sessions that already have GN tickets.
+    3. Candidate sessions that are booked (but no GN ticket yet) and overlap in time.
     """
 
     candidate_ids = {session.s_id for session in candidate_sessions}
     historical_ticket_entries = historical_ticket_entries or []
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    hours = LAST_MINUTE_HOURS if last_minute_hours is None else last_minute_hours
+    last_minute_cutoff = now + timedelta(hours=hours)
 
     for candidate in candidate_sessions:
         candidate.is_conflict = False
@@ -31,6 +46,21 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
         candidate_start = candidate.start_time
         candidate_end = (candidate_start + timedelta(minutes=candidate.length or 0)
                          if candidate_start else None)
+
+        # Checked before anything else: there is no point working out who to email
+        # about a clash for a session that is already too close to file for.
+        if candidate_start and hours > 0:
+            start_utc = candidate_start
+            if start_utc.tzinfo is None:
+                start_utc = start_utc.replace(tzinfo=timezone.utc)
+            if start_utc <= last_minute_cutoff:
+                candidate.is_conflict = True
+                candidate.conflict_type = "last_minute"
+                candidate.conflict_details = (
+                    f"Starts within {hours} hours, too late for the GN to action a "
+                    f"request. Book it by hand if it still needs a ticket."
+                )
+                continue
 
         if candidate_start:
             for existing in existing_sessions:
