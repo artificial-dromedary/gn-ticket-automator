@@ -18,7 +18,7 @@ from airtable_integration import create_airtable_client
 from conflict import check_for_time_conflicts
 from db import SessionLocal
 from emailer import send_booking_summary_email, send_conflict_email
-from models import ConflictEmailLog, ScanResult, TaskLock, User
+from models import ConflictEmailLog, ScanRequest, ScanResult, TaskLock, User
 from ticket_submission_log import TicketSubmissionLog
 from user_profiles import DEFAULT_SCAN_FREQUENCY_HOURS, user_manager
 import gn_ticket
@@ -401,12 +401,50 @@ def last_scan_at(user_email):
         ).scalars().first()
 
 
+def request_scan(user_email):
+    """Record that this user wants a scan before their interval is up."""
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return False
+        pending = db.execute(
+            select(ScanRequest).where(ScanRequest.user_id == user.id)
+        ).scalars().first()
+        if not pending:
+            db.add(ScanRequest(user_id=user.id))
+            db.commit()
+        return True
+
+
+def has_pending_request(user_email):
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return False
+        return db.execute(
+            select(ScanRequest).where(ScanRequest.user_id == user.id)
+        ).scalars().first() is not None
+
+
+def clear_scan_request(user_email):
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return
+        db.execute(sa_delete(ScanRequest).where(ScanRequest.user_id == user.id))
+        db.commit()
+
+
 def user_is_due(user_email, now=None):
     """Whether this user's chosen interval has elapsed since their last scan.
 
     The cron job fires hourly and asks this of everyone, so a user on a 24 hour
-    interval is simply skipped 23 times out of 24.
+    interval is simply skipped 23 times out of 24 — unless they have asked for a
+    scan explicitly, which overrides the interval.
     """
+    if has_pending_request(user_email):
+        return True
+
     prefs = user_manager.get_preferences(user_email) or {}
     hours = prefs.get("scan_frequency_hours") or DEFAULT_SCAN_FREQUENCY_HOURS
 
@@ -482,6 +520,8 @@ def _scan_user(user_email):
                 user_email, len(candidate_sessions), len(clean), len(conflicts))
 
     _record_scan(user_email, candidate_sessions, conflict_payload, clean)
+    # Satisfied: this scan covers whatever prompted the request.
+    clear_scan_request(user_email)
 
     # Conflicts are reported but never block the sessions that are fine.
     if conflict_payload:

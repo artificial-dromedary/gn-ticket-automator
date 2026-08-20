@@ -394,8 +394,15 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div style="margin-top: 12px;">
         <button type="submit">Save settings</button>
-        <button type="submit" formaction="/auto/run" style="margin-left: 10px;">Run auto scan now</button>
+        {% if on_demand_available %}
+        <button type="submit" formaction="/auto/run" style="margin-left: 10px;">Run scan now</button>
+        {% endif %}
       </div>
+      {% if scan_notice %}
+      <div style="margin-top: 12px; padding: 10px 12px; background: #eef6ff; border: 1px solid #b9d6ef; border-radius: 4px; font-size: 0.9em;">
+        {{ scan_notice }}
+      </div>
+      {% endif %}
       {% if booking_busy_since %}
       <div style="margin-top: 12px; padding: 10px 12px; background: #fff6e0; border: 1px solid #e6c682; border-radius: 4px; font-size: 0.9em;">
         <strong>A booking run is in progress.</strong>

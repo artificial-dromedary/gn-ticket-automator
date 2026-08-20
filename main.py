@@ -108,8 +108,10 @@ from collections import deque
 from conflict import check_for_time_conflicts
 from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
+import tasks
 from tasks import auto_scan_time_label, booking_in_progress, booking_slot, busy_notice, dispatch_scan
 from user_profiles import SCAN_FREQUENCY_CHOICES, normalize_scan_frequency
+import render_api
 
 # Global progress storage. Each session keeps a deque of the most recent entries
 # (up to 50) along with a monotonically increasing sequence counter.
@@ -466,6 +468,8 @@ def gn_ticket_page():
             scan_frequency_hours=scan_frequency_hours,
             scan_frequency_choices=SCAN_FREQUENCY_CHOICES,
             manual_booking_enabled=MANUAL_BOOKING_ENABLED,
+            scan_notice=session.pop('scan_notice', None),
+            on_demand_available=MANUAL_BOOKING_ENABLED or render_api.is_configured(),
             auto_scan_time=auto_scan_time_label(scan_frequency_hours),
             latest_scan=latest_scan,
             booking_busy_since=booking_in_progress(),
@@ -713,9 +717,31 @@ def update_preferences():
 @require_auth
 def run_auto_scan_now():
     user = session['user']
-    # Runs in a thread so the request returns immediately whether the scan is being
-    # enqueued to a worker or executed inline (the no-broker cron deployment).
-    threading.Thread(target=dispatch_scan, args=(user['email'],), daemon=True).start()
+
+    # Record the ask first, so it survives whatever happens next: if the trigger
+    # fails, or is not configured at all, the next scheduled run still honours it
+    # regardless of this user's interval.
+    tasks.request_scan(user['email'])
+
+    if MANUAL_BOOKING_ENABLED:
+        # Desktop build: do it here, where there is memory for a browser.
+        threading.Thread(target=dispatch_scan, args=(user['email'],), daemon=True).start()
+        session['scan_notice'] = "Scan started."
+        return redirect(url_for('gn_ticket_page'))
+
+    # Hosted: the scan job has the memory for Chrome, this process does not.
+    # Triggering cancels any run already going, which could kill a booking partway
+    # through and lose its local record, so defer to one already in progress.
+    busy_since = booking_in_progress()
+    if busy_since:
+        session['scan_notice'] = ("A booking run is already in progress — your request is "
+                                  "queued and will be picked up by it or the next check.")
+        return redirect(url_for('gn_ticket_page'))
+
+    ok, message = render_api.trigger_scan_job()
+    session['scan_notice'] = message
+    if not ok:
+        logging.info("On-demand scan for %s fell back to the schedule.", user['email'])
     return redirect(url_for('gn_ticket_page'))
 
 

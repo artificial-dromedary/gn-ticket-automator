@@ -55,6 +55,12 @@ services:
       # Booking here is scheduled only; on-demand booking lives in the desktop app.
       - key: GN_ENABLE_MANUAL_BOOKING
         value: "false"
+      # Lets "Run scan now" start the scan job, which has the memory for a browser.
+      # Without these the button records the request and the next check picks it up.
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_CRON_JOB_ID
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: GOOGLE_CLIENT_ID

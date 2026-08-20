@@ -97,6 +97,20 @@ class TaskLock(Base):
     expires_at = Column(DateTime, nullable=False, index=True)
 
 
+class ScanRequest(Base):
+    """A person asked for a scan sooner than their interval would give them.
+
+    The cron job's command is fixed, so an on-demand trigger cannot pass a flag.
+    A row here is the flag: the next run treats this user as due whatever their
+    interval says, and clears it once scanned.
+    """
+    __tablename__ = "scan_requests"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    requested_at = Column(DateTime, default=utcnow, nullable=False)
+
+
 class ScanResult(Base):
     __tablename__ = "scan_results"
 
