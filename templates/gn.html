@@ -203,6 +203,11 @@ body {
   color: #2c7be5;
   font-weight: bold;
 }
+.lookahead-error {
+  margin-top: 4px;
+  font-size: 0.85em;
+  color: #b3261e;
+}
 .lookahead-note {
   margin-top: 8px;
   font-size: 0.85rem;
@@ -328,6 +333,8 @@ function showExclusionError(sessionDiv, btn, attempted) {
 // Narrowing the window hides cards that are already on the page. Widening it past
 // the window this page was built with needs sessions the server never sent, so that
 // reloads with ?future_days=N and Airtable is queried again.
+// Either way the chosen stop is saved as a preference, because the scheduled run
+// books against the same window: the slider decides how far ahead it reaches.
 // This script block lives in <head>, so wait for the cards to exist.
 document.addEventListener('DOMContentLoaded', function () {
   var range = document.getElementById('lookahead-range');
@@ -339,6 +346,8 @@ document.addEventListener('DOMContentLoaded', function () {
   var loadedDays = parseInt(range.dataset.loadedDays, 10);
   var valueLabel = document.getElementById('lookahead-value');
   var note = document.getElementById('lookahead-note');
+  var saveError = document.getElementById('lookahead-error');
+  var savedLabel = valueLabel.textContent.trim();
 
   // End of the chosen day, local time, so "Today" keeps everything later today.
   function cutoffFor(days) {
@@ -389,6 +398,24 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  // Save the stop so it survives a reload and so the scheduled run books against
+  // the same window. Widening reloads with ?future_days=N, which the server saves
+  // as it rebuilds the page, so only the client-side narrowing needs this call.
+  function persist(days) {
+    return fetch('/gn_ticket/set_lookahead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ window_future_days: days })
+    }).then(function (res) {
+      if (!res.ok) throw new Error('save failed');
+      return res.json();
+    }).then(function (res) {
+      if (!res || !res.ok) throw new Error('save failed');
+      return res;
+    });
+  }
+
   function onChange() {
     var stop = stops[parseInt(range.value, 10)];
     if (!stop) return;
@@ -396,7 +423,7 @@ document.addEventListener('DOMContentLoaded', function () {
     markActive(stops.indexOf(stop));
 
     if (stop.days > loadedDays) {
-      // Beyond what this page loaded — go get the rest.
+      // Beyond what this page loaded — go get the rest. The reload saves it.
       note.textContent = 'Loading sessions further ahead…';
       var url = new URL(window.location.href);
       url.searchParams.set('future_days', stop.days);
@@ -404,6 +431,14 @@ document.addEventListener('DOMContentLoaded', function () {
       return;
     }
     applyFilter(stop.days);
+    persist(stop.days).then(function (res) {
+      savedLabel = (res && res.label) || stop.label;
+      saveError.textContent = '';
+    }).catch(function () {
+      // Say so rather than letting the page imply the scheduled run was narrowed too.
+      saveError.textContent = 'Could not save that — scheduled runs still use ' +
+        savedLabel + ' and this resets when you reload.';
+    });
   }
 
   range.addEventListener('input', function () {
@@ -667,6 +702,9 @@ document.addEventListener('DOMContentLoaded', function() {
         {% endfor %}
       </div>
       <div class="lookahead-note" id="lookahead-note"></div>
+      <div class="lookahead-note">Saved automatically. Scheduled runs only auto-book
+        sessions inside this window.</div>
+      <div class="lookahead-error" id="lookahead-error"></div>
     </div>
 
     <!-- Session Gallery Section -->
