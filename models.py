@@ -43,6 +43,9 @@ class UserPreference(Base):
     buffer_before = Column(Integer, default=10)
     buffer_after = Column(Integer, default=10)
     auto_booking_enabled = Column(Boolean, default=False)
+    # How often the scheduled scan should run for this user. The cron job fires
+    # hourly and skips whoever is not due yet, so this is per-person.
+    scan_frequency_hours = Column(Integer, default=24)
     window_past_days = Column(Integer, default=14)
     window_future_days = Column(Integer, default=90)
     updated_at = Column(DateTime, default=utcnow)
@@ -92,6 +95,20 @@ class TaskLock(Base):
     acquired_at = Column(DateTime, default=utcnow, nullable=False)
     # A holder that dies mid-run would otherwise block its user forever.
     expires_at = Column(DateTime, nullable=False, index=True)
+
+
+class ScanRequest(Base):
+    """A person asked for a scan sooner than their interval would give them.
+
+    The cron job's command is fixed, so an on-demand trigger cannot pass a flag.
+    A row here is the flag: the next run treats this user as due whatever their
+    interval says, and clears it once scanned.
+    """
+    __tablename__ = "scan_requests"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    requested_at = Column(DateTime, default=utcnow, nullable=False)
 
 
 class ScanResult(Base):

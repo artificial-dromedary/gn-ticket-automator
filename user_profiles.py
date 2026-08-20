@@ -5,11 +5,28 @@ from typing import Optional
 from cryptography.fernet import Fernet
 from sqlalchemy import select
 
-from db import SessionLocal, Base, engine
+from db import SessionLocal, Base, engine, ensure_column
 from models import User, UserCredential, UserPreference
 
 
 Base.metadata.create_all(bind=engine)
+# Added after user_preferences shipped, so it needs more than create_all.
+ensure_column("user_preferences", "scan_frequency_hours", "INTEGER", "24")
+
+
+# How often a user's scheduled scan runs. The cron job fires hourly and skips
+# anyone not yet due, so anything coarser than hourly is a per-user choice.
+SCAN_FREQUENCY_CHOICES = (1, 5, 12, 24)
+DEFAULT_SCAN_FREQUENCY_HOURS = 24
+
+
+def normalize_scan_frequency(value):
+    """Coerce whatever arrived from a form into one of the offered intervals."""
+    try:
+        hours = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_SCAN_FREQUENCY_HOURS
+    return hours if hours in SCAN_FREQUENCY_CHOICES else DEFAULT_SCAN_FREQUENCY_HOURS
 
 
 def _get_fernet():
@@ -89,6 +106,8 @@ class UserProfileManager:
             preferences.buffer_after = int(prefs.get("buffer_after") or preferences.buffer_after)
         if "auto_booking_enabled" in prefs:
             preferences.auto_booking_enabled = bool(prefs.get("auto_booking_enabled"))
+        if "scan_frequency_hours" in prefs:
+            preferences.scan_frequency_hours = normalize_scan_frequency(prefs.get("scan_frequency_hours"))
         if "window_past_days" in prefs:
             preferences.window_past_days = int(prefs.get("window_past_days") or preferences.window_past_days)
         if "window_future_days" in prefs:
@@ -115,6 +134,7 @@ class UserProfileManager:
                     "buffer_before": prefs.buffer_before if prefs else 10,
                     "buffer_after": prefs.buffer_after if prefs else 10,
                     "auto_booking_enabled": prefs.auto_booking_enabled if prefs else False,
+                    "scan_frequency_hours": (prefs.scan_frequency_hours if prefs else None) or DEFAULT_SCAN_FREQUENCY_HOURS,
                     "window_past_days": prefs.window_past_days if prefs else 14,
                     "window_future_days": prefs.window_future_days if prefs else 90,
                 }
@@ -132,6 +152,7 @@ class UserProfileManager:
                     "buffer_before": 10,
                     "buffer_after": 10,
                     "auto_booking_enabled": False,
+                    "scan_frequency_hours": DEFAULT_SCAN_FREQUENCY_HOURS,
                     "window_past_days": 14,
                     "window_future_days": 90,
                 }
@@ -139,6 +160,7 @@ class UserProfileManager:
                 "buffer_before": prefs.buffer_before,
                 "buffer_after": prefs.buffer_after,
                 "auto_booking_enabled": prefs.auto_booking_enabled,
+                "scan_frequency_hours": prefs.scan_frequency_hours or DEFAULT_SCAN_FREQUENCY_HOURS,
                 "window_past_days": prefs.window_past_days,
                 "window_future_days": prefs.window_future_days,
             }

@@ -17,10 +17,6 @@ envVarGroups:
         value: "1"
       - key: AUTO_SCAN_TZ
         value: America/Toronto
-      - key: AUTO_SCAN_HOUR
-        value: "6"
-      - key: AUTO_SCAN_MINUTE
-        value: "0"
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
@@ -55,6 +51,16 @@ services:
           property: connectionString
       - key: DISABLE_UPDATES
         value: "1"
+      # Manual booking drives Chrome in this process, which 512 MB cannot survive.
+      # Booking here is scheduled only; on-demand booking lives in the desktop app.
+      - key: GN_ENABLE_MANUAL_BOOKING
+        value: "false"
+      # Lets "Run scan now" start the scan job, which has the memory for a browser.
+      # Without these the button records the request and the next check picks it up.
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_CRON_JOB_ID
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: GOOGLE_CLIENT_ID
@@ -71,10 +77,10 @@ services:
     # instance costs cents per month at one short run per day.
     plan: standard
     dockerfilePath: ./Dockerfile
-    # NOTE: Render cron schedules are UTC and do not follow daylight saving. 10:00 UTC is
-    # 06:00 in Toronto during EDT and 05:00 during EST. For an overnight job that drift is
-    # harmless; if the exact local hour matters, adjust this twice a year.
-    schedule: "0 10 * * *"
+    # Fires hourly and scans only the users whose chosen interval has elapsed, so
+    # per-person frequency (1/5/12/24h) is a dashboard setting rather than a schedule
+    # change. A run with nobody due exits in seconds, and cron jobs bill per minute.
+    schedule: "0 * * * *"
     dockerCommand: python run_scan.py
     envVars:
       - fromGroup: gn-ticket-shared

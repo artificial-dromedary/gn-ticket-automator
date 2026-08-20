@@ -196,10 +196,12 @@ class AirtableIntegration:
                 # ADDED: Exclude already processed sessions
                 filter_parts.append("NOT(FIND('#gn-submitted', {GN Ticket ID}) > 0)")
 
-                # ADDED: Only include sessions within the window
-                filter_parts.append(
-                    f"IS_AFTER({{Session Start Date/Time}}, DATEADD(TODAY(), -{int(window_past_days)}, 'day'))"
-                )
+                # Candidates are only ever sessions that have not happened yet. A
+                # session already under way or finished cannot usefully be ticketed,
+                # and NOW() rather than TODAY() means one earlier today is excluded
+                # too. window_past_days still governs the submitted-ticket history and
+                # conflict lookups, which do need to see backwards.
+                filter_parts.append("IS_AFTER({Session Start Date/Time}, NOW())")
                 filter_parts.append(
                     f"IS_BEFORE({{Session Start Date/Time}}, DATEADD(TODAY(), {int(window_future_days)}, 'day'))"
                 )
@@ -271,7 +273,7 @@ class AirtableIntegration:
                 raise Exception(f"Failed to fetch sessions from Airtable: {e}")
 
         user_filter_msg = f" for user '{user_email}'" if user_email else ""
-        print(f"✅ Found {len(sessions)} Nunavut sessions{user_filter_msg} that haven't been processed yet")
+        print(f"✅ Found {len(sessions)} upcoming Nunavut sessions{user_filter_msg} that haven't been processed yet")
         return sessions
 
     def get_booked_sessions(self, user_email=None, window_past_days=14, window_future_days=90):
