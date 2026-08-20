@@ -355,20 +355,30 @@ document.addEventListener('DOMContentLoaded', function() {
       <div style="margin-top: 10px;">
         <label style="margin-right: 20px;">
           <input type="checkbox" name="auto_booking_enabled" value="yes" {% if auto_booking_enabled %}checked{% endif %}>
-          Enable daily auto-booking
+          Enable auto-booking
+        </label>
+        <label style="margin-right: 20px;">
+          Check for sessions:
+          <select name="scan_frequency_hours">
+            {% for hours in scan_frequency_choices %}
+            <option value="{{ hours }}" {% if hours == scan_frequency_hours %}selected{% endif %}>
+              {% if hours == 1 %}Every hour{% elif hours == 24 %}Once a day{% else %}Every {{ hours }} hours{% endif %}
+            </option>
+            {% endfor %}
+          </select>
         </label>
         <span style="color: #555; font-size: 0.9em;">
-          Runs every day at {{ auto_scan_time }}. Sessions with no conflicts are booked automatically;
+          Runs {{ auto_scan_time }}. Upcoming sessions with no conflicts are booked automatically;
           anything with a conflict is emailed to you instead.
         </span>
       </div>
       <div style="margin-top: 10px;">
         <label style="margin-right: 10px;">
-          Show past days:
+          Ticket history, past days:
           <input type="number" name="window_past_days" value="{{ window_past_days }}" style="width: 70px;">
         </label>
         <label>
-          Show future days:
+          Look ahead, days:
           <input type="number" name="window_future_days" value="{{ window_future_days }}" style="width: 70px;">
         </label>
       </div>
@@ -414,6 +424,7 @@ document.addEventListener('DOMContentLoaded', function() {
   <form id="booker" name="booker" action="/gn_ticket/book_sessions" method="post">
     <p>Sessions show here when their status is set to "Booked" and assigned to <strong>{{ user.name if user else 'you' }}</strong> in Nunavut, scheduled for today or later, and haven't had GN tickets requested yet. Check that these are ready, then click the button.</p>
 
+    {% if manual_booking_enabled %}
     <div style="margin: 15px 0; padding: 10px; background: #f0f8ff; border-radius: 5px;">
       <label>
         <input type="checkbox" name="watch_browser" id="watch_browser" value="yes" style="margin-right: 8px;">
@@ -425,6 +436,12 @@ document.addEventListener('DOMContentLoaded', function() {
     <input type="hidden" name="buffer_after" value="{{ buffer_after }}">
 
     <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
+    {% else %}
+    <div style="margin: 15px 0; padding: 12px; background: #f0f8ff; border: 1px solid #b9d6ef; border-radius: 5px;">
+      <strong>Booking runs on a schedule here.</strong>
+      These sessions are booked automatically {{ auto_scan_time }}. To book one right now, use the desktop app.
+    </div>
+    {% endif %}
 
     <!-- Session Gallery Section -->
     <h3>Current candidate sessions</h3>

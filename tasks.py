@@ -20,7 +20,7 @@ from db import SessionLocal
 from emailer import send_booking_summary_email, send_conflict_email
 from models import ConflictEmailLog, ScanResult, TaskLock, User
 from ticket_submission_log import TicketSubmissionLog
-from user_profiles import user_manager
+from user_profiles import DEFAULT_SCAN_FREQUENCY_HOURS, user_manager
 import gn_ticket
 
 
@@ -75,11 +75,14 @@ celery_app.conf.beat_schedule = {
 logger = logging.getLogger(__name__)
 
 
-def auto_scan_time_label():
-    """Human-readable description of when the scheduled scan runs."""
-    hour = int(os.getenv("AUTO_SCAN_HOUR", "6"))
-    minute = int(os.getenv("AUTO_SCAN_MINUTE", "0"))
-    return f"{hour:02d}:{minute:02d} {celery_app.conf.timezone}"
+def auto_scan_time_label(frequency_hours=None):
+    """Human-readable description of how often the scheduled scan runs."""
+    hours = frequency_hours or DEFAULT_SCAN_FREQUENCY_HOURS
+    if hours == 1:
+        return "every hour"
+    if hours == 24:
+        return "once a day"
+    return f"every {hours} hours"
 
 
 def _try_acquire_lock(name, token, ttl):
@@ -385,11 +388,48 @@ def dispatch_booking(user_email, session_ids):
     return book_sessions.delay(user_email, session_ids)
 
 
+def last_scan_at(user_email):
+    """When this user was last scanned, or None if never."""
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return None
+        return db.execute(
+            select(ScanResult.scanned_at)
+            .where(ScanResult.user_id == user.id)
+            .order_by(ScanResult.scanned_at.desc())
+        ).scalars().first()
+
+
+def user_is_due(user_email, now=None):
+    """Whether this user's chosen interval has elapsed since their last scan.
+
+    The cron job fires hourly and asks this of everyone, so a user on a 24 hour
+    interval is simply skipped 23 times out of 24.
+    """
+    prefs = user_manager.get_preferences(user_email) or {}
+    hours = prefs.get("scan_frequency_hours") or DEFAULT_SCAN_FREQUENCY_HOURS
+
+    previous = last_scan_at(user_email)
+    if previous is None:
+        return True
+
+    now = now or datetime.utcnow()
+    if previous.tzinfo is not None:
+        previous = previous.replace(tzinfo=None)
+
+    # A little grace, or an hourly job whose runs drift by seconds would push a
+    # 1 hour interval out to 2 hours.
+    return previous + timedelta(hours=hours) - timedelta(minutes=5) <= now
+
+
 @celery_app.task(name="tasks.run_scheduled_scan")
-def run_scheduled_scan():
+def run_scheduled_scan(force=False):
     emails = user_manager.list_auto_enabled_users()
-    logger.info("Scheduled scan starting for %d opted-in user(s).", len(emails))
-    for email in emails:
+    due = emails if force else [email for email in emails if user_is_due(email)]
+
+    logger.info("Scheduled scan: %d opted-in user(s), %d due now.", len(emails), len(due))
+    for email in due:
         try:
             dispatch_scan(email)
         except Exception as exc:

@@ -109,6 +109,7 @@ from conflict import check_for_time_conflicts
 from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
 from tasks import auto_scan_time_label, booking_in_progress, booking_slot, busy_notice, dispatch_scan
+from user_profiles import SCAN_FREQUENCY_CHOICES, normalize_scan_frequency
 
 # Global progress storage. Each session keeps a deque of the most recent entries
 # (up to 50) along with a monotonically increasing sequence counter.
@@ -166,6 +167,11 @@ app.config['SESSION_CLEANUP_N_REQUESTS'] = 200
 Session(app)
 
 CONFIG, CONFIG_VALID = load_config_from_env()
+
+# Manual booking drives Chrome inside this process, which a small hosted instance
+# cannot survive. Off there, on everywhere else — the desktop build has the whole
+# machine's memory and is where manual booking belongs.
+MANUAL_BOOKING_ENABLED = os.getenv("GN_ENABLE_MANUAL_BOOKING", "true").strip().lower() in ("1", "true", "yes")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -387,6 +393,7 @@ def gn_ticket_page():
         window_past_days = prefs.get('window_past_days', 14)
         window_future_days = prefs.get('window_future_days', 90)
         auto_booking_enabled = prefs.get('auto_booking_enabled', False)
+        scan_frequency_hours = prefs.get('scan_frequency_hours', 24)
 
         airtable_client = create_airtable_client(profile['airtable_api_key'])
         candidate_sessions = airtable_client.get_booked_sessions(
@@ -456,7 +463,10 @@ def gn_ticket_page():
             window_past_days=window_past_days,
             window_future_days=window_future_days,
             auto_booking_enabled=auto_booking_enabled,
-            auto_scan_time=auto_scan_time_label(),
+            scan_frequency_hours=scan_frequency_hours,
+            scan_frequency_choices=SCAN_FREQUENCY_CHOICES,
+            manual_booking_enabled=MANUAL_BOOKING_ENABLED,
+            auto_scan_time=auto_scan_time_label(scan_frequency_hours),
             latest_scan=latest_scan,
             booking_busy_since=booking_in_progress(),
         )
@@ -469,6 +479,10 @@ def gn_ticket_page():
 @require_auth
 def do_gn_ticket():
     user = session['user']
+    if not MANUAL_BOOKING_ENABLED:
+        logging.info("Manual booking is disabled here; refusing the request.")
+        return render_template("manual_booking_disabled.html", user=user), 403
+
     profile = user_manager.load_profile(user['email'])
 
     prefs = profile.get('preferences', {})
@@ -689,6 +703,7 @@ def update_preferences():
         "window_past_days": int(request.form.get("window_past_days", 14) or 0),
         "window_future_days": int(request.form.get("window_future_days", 90) or 0),
         "auto_booking_enabled": request.form.get("auto_booking_enabled") == "yes",
+        "scan_frequency_hours": normalize_scan_frequency(request.form.get("scan_frequency_hours")),
     }
     user_manager.update_preferences(user['email'], prefs)
     return redirect(url_for('gn_ticket_page'))
