@@ -111,6 +111,20 @@ class ScanRequest(Base):
     requested_at = Column(DateTime, default=utcnow, nullable=False)
 
 
+class DailySummaryLog(Base):
+    """One row per user per day the summary was sent.
+
+    The job that sends it fires hourly, so without this the 5pm digest would go
+    out again at 6pm, 7pm, and every hour until midnight.
+    """
+    __tablename__ = "daily_summary_log"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    summary_date = Column(String(10), nullable=False, index=True)  # local YYYY-MM-DD
+    sent_at = Column(DateTime, default=utcnow, nullable=False)
+
+
 class ScanResult(Base):
     __tablename__ = "scan_results"
 

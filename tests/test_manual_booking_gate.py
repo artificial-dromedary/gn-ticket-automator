@@ -39,7 +39,8 @@ def test_booking_is_refused_when_disabled(client, monkeypatch):
     assert b"desktop app" in response.data
 
 
-def test_the_button_is_hidden_when_disabled():
+def test_one_button_that_points_where_booking_can_happen():
+    """Same button, same words, either way — the difference is where the work runs."""
     from flask import render_template
 
     context = dict(all_sessions=[], submitted_ticket_log=[], latest_conflicts=[],
@@ -47,15 +48,40 @@ def test_the_button_is_hidden_when_disabled():
                    buffer_before=10, buffer_after=10, window_past_days=14,
                    window_future_days=90, auto_booking_enabled=True,
                    scan_frequency_hours=24, scan_frequency_choices=(1, 5, 12, 24),
-                   auto_scan_time="once a day", latest_scan=None, booking_busy_since=None)
+                   auto_scan_time="once a day", latest_scan=None, booking_busy_since=None,
+                   scan_notice=None)
 
     with main.app.test_request_context("/gn_ticket"):
-        off = render_template("gn.html", manual_booking_enabled=False, **context)
-        on = render_template("gn.html", manual_booking_enabled=True, **context)
+        hosted = render_template("gn.html", manual_booking_enabled=False, **context)
+        desktop = render_template("gn.html", manual_booking_enabled=True, **context)
 
-    assert "Book displayed sessions with GN" not in off
-    assert "Booking runs on a schedule here" in off
-    assert "Book displayed sessions with GN" in on
+    # Hosted: starts the scheduled job, which has the memory for a browser.
+    assert 'value="Book now"' in hosted
+    assert 'formaction="/auto/run"' in hosted
+    assert "watch_browser" not in hosted
+
+    # Desktop: books in this process, and can show the browser doing it.
+    assert 'value="Book now"' in desktop
+    assert 'formaction="/gn_ticket/book_sessions"' in desktop
+    assert "watch_browser" in desktop
+
+
+def test_the_settings_box_no_longer_duplicates_the_button():
+    """'Run scan now' and 'Book now' were the same action described two ways."""
+    from flask import render_template
+
+    with main.app.test_request_context("/gn_ticket"):
+        html = render_template(
+            "gn.html", all_sessions=[], submitted_ticket_log=[], latest_conflicts=[],
+            emailed_conflict_ids=set(), user={"name": "Lead", "email": "l@x.org"},
+            buffer_before=10, buffer_after=10, window_past_days=14, window_future_days=90,
+            auto_booking_enabled=True, scan_frequency_hours=24,
+            scan_frequency_choices=(1, 5, 12, 24), manual_booking_enabled=False,
+            auto_scan_time="once a day", latest_scan=None, booking_busy_since=None,
+            scan_notice=None)
+
+    assert "Run scan now" not in html
+    assert html.count('name="book_sessions"') == 1
 
 
 def test_the_frequency_dropdown_offers_every_interval():
@@ -68,7 +94,8 @@ def test_the_frequency_dropdown_offers_every_interval():
             buffer_before=10, buffer_after=10, window_past_days=14, window_future_days=90,
             auto_booking_enabled=True, scan_frequency_hours=5,
             scan_frequency_choices=(1, 5, 12, 24), manual_booking_enabled=False,
-            auto_scan_time="every 5 hours", latest_scan=None, booking_busy_since=None)
+            auto_scan_time="every 5 hours", latest_scan=None, booking_busy_since=None,
+            scan_notice=None)
 
     assert "Every hour" in html
     assert "Once a day" in html

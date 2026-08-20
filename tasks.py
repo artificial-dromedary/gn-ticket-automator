@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import uuid
+from zoneinfo import ZoneInfo
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -17,8 +18,9 @@ from sqlalchemy.exc import IntegrityError
 from airtable_integration import create_airtable_client
 from conflict import check_for_time_conflicts
 from db import SessionLocal
-from emailer import send_booking_summary_email, send_conflict_email
-from models import ConflictEmailLog, ScanRequest, ScanResult, TaskLock, User
+from emailer import send_conflict_email, send_daily_summary_email
+from models import (ConflictEmailLog, DailySummaryLog, ScanRequest, ScanResult,
+                    TaskLock, TicketSubmission, User)
 from ticket_submission_log import TicketSubmissionLog
 from user_profiles import DEFAULT_SCAN_FREQUENCY_HOURS, user_manager
 import gn_ticket
@@ -53,6 +55,11 @@ BOOK_LOCK_TTL = LOCK_TTL
 # service. Chrome is the memory ceiling on a small instance, so two at once is how
 # a run gets killed rather than how two runs finish faster.
 BOOKING_SLOT = "booking-slot"
+
+# The end-of-day summary. The job fires hourly and sends it on the first run at or
+# after this local hour, once per day.
+DAILY_SUMMARY_HOUR = int(os.getenv("DAILY_SUMMARY_HOUR", "17"))
+DAILY_SUMMARY_TZ = os.getenv("DAILY_SUMMARY_TZ", "America/New_York")
 
 # Waiting beats failing: these runs are never urgent, so a busy service queues.
 BUSY_POLL_SECONDS = int(os.getenv("GN_BUSY_POLL_SECONDS", "30"))
@@ -636,7 +643,114 @@ def _book_sessions(user_email, session_ids):
 
     logger.info("Booking for %s: %d succeeded, %d failed.", user_email, len(successful), len(failed))
 
+
+def _local_now():
+    return datetime.now(ZoneInfo(DAILY_SUMMARY_TZ))
+
+
+def _local_day_bounds_utc(local_date):
+    """The UTC instants bracketing a local calendar day.
+
+    Submissions are stored as naive UTC, but "today" means today where the person
+    is, so the window has to be built in their zone and converted back.
+    """
+    zone = ZoneInfo(DAILY_SUMMARY_TZ)
+    start_local = datetime.combine(local_date, datetime.min.time(), tzinfo=zone)
+    end_local = start_local + timedelta(days=1)
+    return (start_local.astimezone(timezone.utc).replace(tzinfo=None),
+            end_local.astimezone(timezone.utc).replace(tzinfo=None))
+
+
+def sessions_booked_on(user_email, local_date):
+    start_utc, end_utc = _local_day_bounds_utc(local_date)
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return []
+        rows = db.execute(
+            select(TicketSubmission)
+            .where(TicketSubmission.user_id == user.id,
+                   TicketSubmission.submitted_at >= start_utc,
+                   TicketSubmission.submitted_at < end_utc)
+            .order_by(TicketSubmission.submitted_at)
+        ).scalars().all()
+
+    return [{
+        "title": row.title,
+        "school": row.school,
+        "teacher": row.teacher,
+        "ticket_id": row.ticket_id,
+        "start_time": row.start_time.isoformat() if row.start_time else None,
+    } for row in rows]
+
+
+def outstanding_conflicts(user_email):
+    """Conflicts from the most recent scan — what still needs a person."""
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return []
+        scan = db.execute(
+            select(ScanResult)
+            .where(ScanResult.user_id == user.id)
+            .order_by(ScanResult.scanned_at.desc())
+        ).scalars().first()
+
+    if not scan or not scan.conflicts_json:
+        return []
     try:
-        send_booking_summary_email(user_email, successful, failed)
-    except Exception as exc:
-        logger.error("Could not send booking summary to %s: %s", user_email, exc)
+        return json.loads(scan.conflicts_json)
+    except (TypeError, json.JSONDecodeError):
+        return []
+
+
+def _summary_already_sent(user_email, summary_date):
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return True
+        return db.execute(
+            select(DailySummaryLog).where(DailySummaryLog.user_id == user.id,
+                                          DailySummaryLog.summary_date == summary_date)
+        ).scalars().first() is not None
+
+
+def _record_summary_sent(user_email, summary_date):
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if user:
+            db.add(DailySummaryLog(user_id=user.id, summary_date=summary_date))
+            db.commit()
+
+
+def send_daily_summaries(force=False):
+    """Send each opted-in user their end-of-day summary, once per day.
+
+    Called on every scheduled run. Most of them are before the cut-off or have
+    already sent today's, and do nothing.
+    """
+    now_local = _local_now()
+    if not force and now_local.hour < DAILY_SUMMARY_HOUR:
+        return 0
+
+    summary_date = now_local.date().isoformat()
+    sent = 0
+
+    for email in user_manager.list_auto_enabled_users():
+        if not force and _summary_already_sent(email, summary_date):
+            continue
+        try:
+            send_daily_summary_email(
+                email,
+                sessions_booked_on(email, now_local.date()),
+                outstanding_conflicts(email),
+                summary_date,
+            )
+            _record_summary_sent(email, summary_date)
+            sent += 1
+        except Exception as exc:
+            logger.error("Could not send the daily summary to %s: %s", email, exc)
+
+    if sent:
+        logger.info("Sent %d daily summary email(s) for %s.", sent, summary_date)
+    return sent

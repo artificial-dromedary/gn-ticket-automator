@@ -10,6 +10,7 @@ deployment needs neither Redis nor a long-running worker.
     python run_scan.py --dry-run        # everything except submitting to ServiceNow
     python run_scan.py --user a@b.org   # one user, regardless of interval (repeatable)
     python run_scan.py --list-users     # show who is opted in, do nothing else
+    python run_scan.py --daily-summary  # send the end-of-day summary now
 
 Exit codes: 0 success, 1 one or more users failed, 2 misconfiguration.
 """
@@ -29,6 +30,8 @@ def _parse_args(argv):
                         help="Print the opted-in users and exit without scanning.")
     parser.add_argument("--force", action="store_true",
                         help="Scan every opted-in user now, ignoring their chosen interval.")
+    parser.add_argument("--daily-summary", action="store_true",
+                        help="Send the end-of-day summary now and exit, whatever the hour.")
     parser.add_argument("--max-bookings", type=int, default=None, metavar="N",
                         help="Cap bookings per user per run. 0 means no cap.")
     return parser.parse_args(argv)
@@ -69,6 +72,11 @@ def main(argv=None):
             print(email)
         return 0
 
+    if args.daily_summary:
+        log.info("Sending the daily summary on request.")
+        tasks.send_daily_summaries(force=True)
+        return 0
+
     if args.users:
         # Naming someone explicitly is a request to scan them, interval or not.
         emails = args.users
@@ -80,7 +88,8 @@ def main(argv=None):
 
         emails = opted_in if args.force else [e for e in opted_in if tasks.user_is_due(e)]
         if not emails:
-            log.info("%d user(s) opted in, none due yet. Nothing to do.", len(opted_in))
+            log.info("%d user(s) opted in, none due yet.", len(opted_in))
+            _send_daily_summaries(log)
             return 0
 
     failures = 0
@@ -93,7 +102,20 @@ def main(argv=None):
             log.exception("Scan failed for %s", email)
 
     log.info("Run complete: %d user(s), %d failure(s).", len(emails), failures)
+
+    # After scanning, so today's bookings are in the summary.
+    _send_daily_summaries(log)
+
     return 1 if failures else 0
+
+
+def _send_daily_summaries(log):
+    """Send the end-of-day summary if it is due. Never fails the run."""
+    import tasks
+    try:
+        tasks.send_daily_summaries()
+    except Exception:
+        log.exception("Daily summary failed.")
 
 
 if __name__ == "__main__":
