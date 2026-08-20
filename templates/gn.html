@@ -141,6 +141,53 @@ body {
 .submission-log th {
   background: #eef3f8;
 }
+.lookahead {
+  margin: 22px 0 18px;
+  padding: 14px 18px 10px;
+  background: #f7f9fc;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+}
+.lookahead-label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 0.95rem;
+  color: #333;
+}
+.lookahead-range {
+  width: 100%;
+  margin: 0;
+  height: 28px;
+  accent-color: #2c7be5;
+  cursor: pointer;
+}
+/* The labels sit under the thumb's travel, so the first and last are pulled inward
+   by half a thumb width to line up with the ends of the track rather than the box. */
+.lookahead-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 8px;
+  font-size: 0.78rem;
+  color: #55606b;
+}
+.lookahead-stop {
+  flex: 1 1 0;
+  text-align: center;
+  white-space: nowrap;
+}
+.lookahead-stop:first-child { text-align: left; }
+.lookahead-stop:last-child { text-align: right; }
+.lookahead-stop.is-active {
+  color: #2c7be5;
+  font-weight: bold;
+}
+.lookahead-note {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: #55606b;
+  min-height: 1.2em;
+}
+.session[hidden] { display: none; }
 .gallery-scroll {
   max-height: 2600px;
   overflow-y: auto;
@@ -209,6 +256,98 @@ function toggleSession(btn) {
     $(btn).text('Remove').removeClass('btn-include').addClass('btn-exclude');
   }
 }
+
+// --- Look-ahead slider -------------------------------------------------------
+// Narrowing the window hides cards that are already on the page. Widening it past
+// the window this page was built with needs sessions the server never sent, so that
+// reloads with ?future_days=N and Airtable is queried again.
+// This script block lives in <head>, so wait for the cards to exist.
+document.addEventListener('DOMContentLoaded', function () {
+  var range = document.getElementById('lookahead-range');
+  if (!range) return;
+
+  var stops = [].map.call(document.querySelectorAll('.lookahead-stop'), function (el) {
+    return { days: parseInt(el.dataset.days, 10), label: el.textContent.trim(), el: el };
+  });
+  var loadedDays = parseInt(range.dataset.loadedDays, 10);
+  var valueLabel = document.getElementById('lookahead-value');
+  var note = document.getElementById('lookahead-note');
+
+  // End of the chosen day, local time, so "Today" keeps everything later today.
+  function cutoffFor(days) {
+    var end = new Date();
+    end.setHours(23, 59, 59, 999);
+    end.setDate(end.getDate() + days);
+    return end;
+  }
+
+  function applyFilter(days) {
+    var cutoff = cutoffFor(days);
+    var shown = 0, hidden = 0;
+
+    [].forEach.call(document.querySelectorAll('.session[data-start]'), function (card) {
+      var raw = card.dataset.start;
+      if (!raw) return;                       // no date: never filtered out
+      var start = new Date(raw);
+      if (isNaN(start.getTime())) return;
+
+      var bookMe = card.querySelector('input[name="book_me"]');
+      if (start > cutoff) {
+        if (!card.hasAttribute('hidden')) {
+          // Remember the choice so restoring does not book something the user removed.
+          if (bookMe) { card.dataset.bookMeBefore = bookMe.value; bookMe.value = 'n'; }
+          card.setAttribute('hidden', 'hidden');
+        }
+        hidden++;
+      } else {
+        if (card.hasAttribute('hidden')) {
+          if (bookMe && card.dataset.bookMeBefore !== undefined) {
+            bookMe.value = card.dataset.bookMeBefore;
+            delete card.dataset.bookMeBefore;
+          }
+          card.removeAttribute('hidden');
+        }
+        shown++;
+      }
+    });
+
+    note.textContent = hidden
+      ? shown + ' session(s) shown, ' + hidden + ' beyond this window hidden and not booked.'
+      : '';
+  }
+
+  function markActive(index) {
+    stops.forEach(function (stop, i) {
+      stop.el.classList.toggle('is-active', i === index);
+    });
+  }
+
+  function onChange() {
+    var stop = stops[parseInt(range.value, 10)];
+    if (!stop) return;
+    valueLabel.textContent = stop.label;
+    markActive(stops.indexOf(stop));
+
+    if (stop.days > loadedDays) {
+      // Beyond what this page loaded — go get the rest.
+      note.textContent = 'Loading sessions further ahead…';
+      var url = new URL(window.location.href);
+      url.searchParams.set('future_days', stop.days);
+      window.location.assign(url.toString());
+      return;
+    }
+    applyFilter(stop.days);
+  }
+
+  range.addEventListener('input', function () {
+    var stop = stops[parseInt(range.value, 10)];
+    if (stop) { valueLabel.textContent = stop.label; markActive(stops.indexOf(stop)); }
+  });
+  range.addEventListener('change', onChange);
+
+  markActive(parseInt(range.value, 10));
+  applyFilter(loadedDays);
+});
 
 function formatTimeInTz(isoString, timezone) {
   if (!isoString) return 'Unknown time';
@@ -373,13 +512,9 @@ document.addEventListener('DOMContentLoaded', function() {
         </span>
       </div>
       <div style="margin-top: 10px;">
-        <label style="margin-right: 10px;">
+        <label>
           Ticket history, past days:
           <input type="number" name="window_past_days" value="{{ window_past_days }}" style="width: 70px;">
-        </label>
-        <label>
-          Look ahead, days:
-          <input type="number" name="window_future_days" value="{{ window_future_days }}" style="width: 70px;">
         </label>
       </div>
       <div style="margin-top: 10px;">
@@ -405,7 +540,7 @@ document.addEventListener('DOMContentLoaded', function() {
       {% if latest_scan %}
       <div style="margin-top: 12px; font-size: 0.9em; color: #333;">
         <strong>Last automatic run:</strong>
-        {{ latest_scan.scanned_at or 'unknown' }} &middot;
+        {{ latest_scan.scanned_at | friendly_datetime }} &middot;
         {{ latest_scan.candidates or 0 }} candidate(s),
         {{ latest_scan.clean or 0 }} without conflicts,
         {{ latest_scan.conflicts or 0 }} conflicted
@@ -443,8 +578,29 @@ document.addEventListener('DOMContentLoaded', function() {
     <input type="submit" name="book_sessions" id="book_sessions" value="Book now"
            formaction="{{ '/gn_ticket/book_sessions' if manual_booking_enabled else '/auto/run' }}">
     <span style="margin-left: 10px; color: #555; font-size: 0.9em;">
-      Books every session below that has no conflict. Otherwise this happens on its own, {{ auto_scan_time }}.
+      These sessions will be booked on the next scheduled run, or you can book now.
     </span>
+
+    <!-- Look-ahead slider. Narrowing filters the cards already on the page; widening
+         past what was loaded reloads with a bigger window and re-pulls from Airtable. -->
+    <div class="lookahead" id="lookahead">
+      <label class="lookahead-label" for="lookahead-range">
+        Look ahead: <strong id="lookahead-value">{{ lookahead_label }}</strong>
+      </label>
+      <input type="range" id="lookahead-range" class="lookahead-range"
+             min="0" max="{{ lookahead_stops | length - 1 }}" step="1"
+             value="{{ lookahead_index }}" list="lookahead-ticks"
+             data-loaded-days="{{ window_future_days }}">
+      <datalist id="lookahead-ticks">
+        {% for days, label in lookahead_stops %}<option value="{{ loop.index0 }}"></option>{% endfor %}
+      </datalist>
+      <div class="lookahead-scale">
+        {% for days, label in lookahead_stops %}
+        <span class="lookahead-stop" data-index="{{ loop.index0 }}" data-days="{{ days }}">{{ label }}</span>
+        {% endfor %}
+      </div>
+      <div class="lookahead-note" id="lookahead-note"></div>
+    </div>
 
     <!-- Session Gallery Section -->
     <h3>Current candidate sessions</h3>
@@ -453,7 +609,8 @@ document.addEventListener('DOMContentLoaded', function() {
       {% if all_sessions %}
         {% for session in all_sessions %}
         {% set is_conflict = session.conflict_type %}
-        <div class="session{% if session.conflict_type == 'time' %} session-conflict{% elif session.conflict_type in ['gn_ticket', 'ghost_ticket'] %} session-gn-warning{% endif %}{% if is_conflict %} session-excluded{% endif %}">
+        <div class="session{% if session.conflict_type == 'time' %} session-conflict{% elif session.conflict_type in ['gn_ticket', 'ghost_ticket'] %} session-gn-warning{% endif %}{% if is_conflict %} session-excluded{% endif %}"
+             data-start="{{ session.start_time.isoformat() if session.start_time else '' }}">
           <input name="book_me" type="hidden" id="{{session.s_id}}" value="{{ 'n' if is_conflict else 'y' }}">
           <input name="airtable_id" type="hidden" id="{{session.s_id}}_airtable" value="{{session.s_id}}">
 

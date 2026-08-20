@@ -96,5 +96,19 @@ services:
 
 databases:
   - name: gn-ticket-db
+    # Not `free`: a free Postgres expires 30 days after creation and is then deleted,
+    # and it cannot be upgraded to a paid instance. This database holds every user's
+    # encrypted Airtable key, ServiceNow password and 2FA secret — losing it monthly
+    # would mean everyone redoing the setup wizard. basic-256mb is the same 256 MB /
+    # 0.1 CPU as free, and only the storage was ever oversized.
     plan: basic-256mb
+    # 1 GB, the smallest there is. This stores text: users, tickets, scan results and
+    # sessions. Storage bills at $0.30/GB/month, so this is $0.30 rather than the
+    # $4.50 that 15 GB costs.
+    #
+    # Render can only ever GROW a database's disk — "you can increase an existing
+    # database's storage at any time, but you can't reduce it". So this line does not
+    # shrink the live database; it only applies to one created fresh. Shrinking means
+    # creating a new database and repointing DATABASE_URL.
+    diskSizeGB: 1
     databaseName: gn_ticket

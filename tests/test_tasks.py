@@ -90,13 +90,15 @@ def registered_user():
 def wired(monkeypatch, registered_user):
     """Patch out Airtable, email and the booking queue; record what each was asked to do."""
     airtable = FakeAirtable()
-    calls = {"booked_ids": [], "conflict_emails": []}
+    calls = {"booked_ids": [], "conflict_emails": [], "manual_flags": []}
 
     monkeypatch.setattr(tasks, "create_airtable_client", lambda key: airtable)
     monkeypatch.setattr(tasks, "send_conflict_email",
                         lambda email, sessions: calls["conflict_emails"].append(list(sessions)))
     monkeypatch.setattr(tasks.book_sessions, "delay",
-                        lambda email, ids: calls["booked_ids"].append(list(ids)))
+                        lambda email, ids, manual=False: (
+                            calls["booked_ids"].append(list(ids)),
+                            calls["manual_flags"].append(manual)))
     calls["airtable"] = airtable
     return calls
 

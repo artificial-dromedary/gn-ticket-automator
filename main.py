@@ -4,7 +4,7 @@ from flask import request
 import json
 import time
 import threading 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 from dotenv import load_dotenv
 import secrets
@@ -106,11 +106,13 @@ from ticket_submission_log import TicketSubmissionLog
 from google_auth_oauthlib.flow import Flow
 from collections import deque
 from conflict import check_for_time_conflicts
+from emailer import friendly_datetime, send_booking_summary_email
 from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
 import tasks
 from tasks import auto_scan_time_label, booking_in_progress, booking_slot, busy_notice, dispatch_scan
-from user_profiles import SCAN_FREQUENCY_CHOICES, normalize_scan_frequency
+from user_profiles import (LOOKAHEAD_FOREVER_DAYS, LOOKAHEAD_STOPS, SCAN_FREQUENCY_CHOICES,
+                           normalize_lookahead, normalize_scan_frequency)
 import render_api
 
 # Global progress storage. Each session keeps a deque of the most recent entries
@@ -167,6 +169,21 @@ app.config['SESSION_SQLALCHEMY_TABLE'] = 'flask_sessions'
 # SQL has no TTL, so expired rows are pruned on roughly every Nth request.
 app.config['SESSION_CLEANUP_N_REQUESTS'] = 200
 Session(app)
+
+app.jinja_env.filters['friendly_datetime'] = friendly_datetime
+
+
+def notify_booking_finished(user_email, successful, failed, conflicts=None):
+    """Email the result of a booking someone started by hand.
+
+    Best-effort: a booking that worked must not be reported as a failure because the
+    mail relay was down, and the outcome is on the progress page regardless.
+    """
+    try:
+        send_booking_summary_email(user_email, successful, failed,
+                                   conflict_sessions=conflicts, manual=True)
+    except Exception as exc:
+        logging.error("Could not send booking summary to %s: %s", user_email, exc)
 
 CONFIG, CONFIG_VALID = load_config_from_env()
 
@@ -397,6 +414,21 @@ def gn_ticket_page():
         auto_booking_enabled = prefs.get('auto_booking_enabled', False)
         scan_frequency_hours = prefs.get('scan_frequency_hours', 24)
 
+        # The look-ahead slider narrows the visible sessions in the browser without a
+        # round trip. Widening it needs sessions this page never loaded, so the slider
+        # reloads with ?future_days=N and the fresh window is pulled from Airtable
+        # below. Saving it keeps the scheduled run looking at the same horizon.
+        requested_future_days = request.args.get('future_days')
+        if requested_future_days is not None:
+            window_future_days = normalize_lookahead(requested_future_days)
+            if window_future_days != prefs.get('window_future_days'):
+                user_manager.update_preferences(user['email'],
+                                                {'window_future_days': window_future_days})
+
+        lookahead_index = next(
+            (i for i, (days, _) in enumerate(LOOKAHEAD_STOPS) if days == window_future_days), 0)
+        lookahead_label = LOOKAHEAD_STOPS[lookahead_index][1]
+
         airtable_client = create_airtable_client(profile['airtable_api_key'])
         candidate_sessions = airtable_client.get_booked_sessions(
             user_email=user['email'],
@@ -464,6 +496,10 @@ def gn_ticket_page():
             buffer_after=buffer_after,
             window_past_days=window_past_days,
             window_future_days=window_future_days,
+            lookahead_stops=LOOKAHEAD_STOPS,
+            lookahead_forever_days=LOOKAHEAD_FOREVER_DAYS,
+            lookahead_index=lookahead_index,
+            lookahead_label=lookahead_label,
             auto_booking_enabled=auto_booking_enabled,
             scan_frequency_hours=scan_frequency_hours,
             scan_frequency_choices=SCAN_FREQUENCY_CHOICES,
@@ -557,9 +593,18 @@ def do_gn_ticket():
                     buffer_after=buffer_after
                 )
             ticket_log.add_successful_submissions(user['email'], booking_results.get('successful_sessions', []))
+            notify_booking_finished(
+                user['email'],
+                booking_results.get('successful_sessions', []),
+                booking_results.get('failed_sessions', []),
+            )
         except Exception as e:
             set_progress(progress_session_id, f"Critical error during booking: {str(e)}", status="error")
             logging.error(f"Booking thread failed: {e}", exc_info=True)
+            notify_booking_finished(
+                user['email'], [],
+                [{'title': f"{len(send_to_gn)} session(s)", 'error': str(e)}],
+            )
 
     threading.Thread(target=run_booking, daemon=True).start()
 
@@ -704,10 +749,13 @@ def update_preferences():
         "buffer_before": int(request.form.get("buffer_before", 10) or 0),
         "buffer_after": int(request.form.get("buffer_after", 10) or 0),
         "window_past_days": int(request.form.get("window_past_days", 14) or 0),
-        "window_future_days": int(request.form.get("window_future_days", 90) or 0),
         "auto_booking_enabled": request.form.get("auto_booking_enabled") == "yes",
         "scan_frequency_hours": normalize_scan_frequency(request.form.get("scan_frequency_hours")),
     }
+    # The look-ahead lives on the slider, not in this form. Only write it when it was
+    # actually submitted, or saving settings would snap the slider back to the default.
+    if "window_future_days" in request.form:
+        prefs["window_future_days"] = normalize_lookahead(request.form.get("window_future_days"))
     user_manager.update_preferences(user['email'], prefs)
     return redirect(url_for('gn_ticket_page'))
 
@@ -725,7 +773,9 @@ def run_auto_scan_now():
     if MANUAL_BOOKING_ENABLED:
         # Desktop build: do it here, where there is memory for a browser.
         threading.Thread(target=dispatch_scan, args=(user['email'],), daemon=True).start()
-        session['scan_notice'] = "Booking started."
+        session['scan_notice'] = ("The booker is running. You will get an email at "
+                                  f"{user['email']} when it finishes, with anything booked, "
+                                  "skipped for a conflict, or failed.")
         return redirect(url_for('gn_ticket_page'))
 
     # Hosted: the scan job has the memory for Chrome, this process does not.
@@ -738,6 +788,9 @@ def run_auto_scan_now():
         return redirect(url_for('gn_ticket_page'))
 
     ok, message = render_api.trigger_scan_job()
+    if ok:
+        message = (f"{message} You will get an email at {user['email']} when it finishes, "
+                   "with anything booked, skipped for a conflict, or failed.")
     session['scan_notice'] = message
     if not ok:
         logging.info("On-demand scan for %s fell back to the schedule.", user['email'])
