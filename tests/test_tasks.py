@@ -10,6 +10,7 @@ import tasks
 from models import ConflictEmailLog, ScanResult, TaskLock, User
 from db import SessionLocal
 from sqlalchemy import select
+from ticket_submission_log import TicketSubmissionLog
 from user_profiles import user_manager
 
 
@@ -89,13 +90,11 @@ def registered_user():
 def wired(monkeypatch, registered_user):
     """Patch out Airtable, email and the booking queue; record what each was asked to do."""
     airtable = FakeAirtable()
-    calls = {"booked_ids": [], "conflict_emails": [], "summary_emails": []}
+    calls = {"booked_ids": [], "conflict_emails": []}
 
     monkeypatch.setattr(tasks, "create_airtable_client", lambda key: airtable)
     monkeypatch.setattr(tasks, "send_conflict_email",
                         lambda email, sessions: calls["conflict_emails"].append(list(sessions)))
-    monkeypatch.setattr(tasks, "send_booking_summary_email",
-                        lambda email, ok, bad: calls["summary_emails"].append((ok, bad)))
     monkeypatch.setattr(tasks.book_sessions, "delay",
                         lambda email, ids: calls["booked_ids"].append(list(ids)))
     calls["airtable"] = airtable
@@ -182,10 +181,10 @@ def test_booking_skips_sessions_that_became_conflicted(monkeypatch, wired):
     tasks.book_sessions(USER_EMAIL, ["recClean1", "recClean2", "recConflict"])
 
     assert handled["ids"] == ["recClean1", "recClean2"]
-    assert len(wired["summary_emails"]) == 1
-    booked, failed = wired["summary_emails"][0]
-    assert [entry["ticket_id"] for entry in booked] == ["TKT-recClean1", "TKT-recClean2"]
-    assert failed == []
+
+    # What the end-of-day summary is built from.
+    logged = TicketSubmissionLog().get_entries(USER_EMAIL)
+    assert sorted(entry["ticket_id"] for entry in logged) == ["TKT-recClean1", "TKT-recClean2"]
 
 
 def test_booking_outcome_lands_on_the_latest_scan(monkeypatch, wired):
@@ -386,5 +385,5 @@ def test_a_booking_that_cannot_get_the_slot_books_nothing(monkeypatch, wired):
     with tasks.booking_slot(wait_seconds=0):
         tasks.book_sessions(USER_EMAIL, ["recClean1", "recClean2"])
 
-    # Nothing recorded, nothing emailed: the sessions are untouched for the next run.
-    assert wired["summary_emails"] == []
+    # Nothing recorded: the sessions are untouched and go to the next run.
+    assert TicketSubmissionLog().get_entries(USER_EMAIL) == []

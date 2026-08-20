@@ -30,7 +30,7 @@ def trigger_scan_job():
     job_id = os.getenv("RENDER_CRON_JOB_ID")
 
     if not api_key or not job_id:
-        return False, ("On-demand runs are not configured on this deployment. "
+        return False, ("On-demand booking is not configured on this deployment. "
                        "Your sessions will still be booked at the next scheduled check.")
 
     try:
@@ -41,11 +41,11 @@ def trigger_scan_job():
         )
     except Exception as exc:
         logger.error("Could not reach Render to trigger the scan job: %s", exc)
-        return False, ("Could not start a run just now. Your request is saved and will "
+        return False, ("Could not start booking just now. Your request is saved and will "
                        "be picked up at the next scheduled check.")
 
     if response.status_code in (200, 201, 202):
-        return True, "Scan started. You'll get an email when it finishes."
+        return True, "Booking started. Conflict-free sessions will be filed shortly, and you'll get the daily summary at the usual time."
 
     logger.error("Render refused the cron trigger: HTTP %s %s",
                  response.status_code, response.text[:300])

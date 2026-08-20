@@ -81,3 +81,46 @@ def send_booking_summary_email(to_email, successful_sessions, failed_sessions,
         subject += f", {len(failed_sessions)} failed"
 
     _send(to_email, subject, "\n".join(lines))
+
+
+def send_daily_summary_email(to_email, booked_sessions, conflict_sessions, summary_date,
+                             subject_prefix="GN Ticket Auto-Booking"):
+    """The end-of-day picture: what was filed today, then what still needs a person.
+
+    Sent once a day rather than after every run, so a short booking interval does
+    not turn into a stream of near-identical mail.
+    """
+    booked_sessions = booked_sessions or []
+    conflict_sessions = conflict_sessions or []
+
+    lines = [f"GN ticket summary for {summary_date}.", ""]
+
+    if booked_sessions:
+        lines.append(f"BOOKED TODAY ({len(booked_sessions)})")
+        lines.append("")
+        for session in booked_sessions:
+            lines.append(f"- {session.get('title', 'Unknown Session')} | {session.get('school', 'Unknown School')} | {session.get('start_time', 'Unknown')}")
+            lines.append(f"  Ticket: {session.get('ticket_id', 'Unknown')}")
+        lines.append("")
+    else:
+        lines.append("BOOKED TODAY")
+        lines.append("")
+        lines.append("- Nothing was booked today.")
+        lines.append("")
+
+    if conflict_sessions:
+        lines.append(f"CONFLICTS NEEDING YOU ({len(conflict_sessions)})")
+        lines.append("")
+        for session in conflict_sessions:
+            lines.append(f"- {session.get('title', 'Unknown')} | {session.get('school', 'Unknown')} | {session.get('start_time', 'Unknown')}")
+            if session.get('conflict_details'):
+                lines.append(f"  Reason: {session.get('conflict_details')}")
+        lines.append("")
+        lines.append("These were not booked. Resolve them in Airtable and the next run will pick them up.")
+    else:
+        lines.append("CONFLICTS NEEDING YOU")
+        lines.append("")
+        lines.append("- None. Everything upcoming is either booked or has no conflict.")
+
+    subject = f"{subject_prefix}: Daily summary for {summary_date}"
+    _send(to_email, subject, "\n".join(lines))

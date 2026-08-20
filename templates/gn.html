@@ -394,15 +394,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div style="margin-top: 12px;">
         <button type="submit">Save settings</button>
-        {% if on_demand_available %}
-        <button type="submit" formaction="/auto/run" style="margin-left: 10px;">Run scan now</button>
-        {% endif %}
       </div>
-      {% if scan_notice %}
-      <div style="margin-top: 12px; padding: 10px 12px; background: #eef6ff; border: 1px solid #b9d6ef; border-radius: 4px; font-size: 0.9em;">
-        {{ scan_notice }}
-      </div>
-      {% endif %}
       {% if booking_busy_since %}
       <div style="margin-top: 12px; padding: 10px 12px; background: #fff6e0; border: 1px solid #e6c682; border-radius: 4px; font-size: 0.9em;">
         <strong>A booking run is in progress.</strong>
@@ -428,6 +420,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <!-- Main Form and Session Content -->
 <div class="content-wrapper">
+  {% if scan_notice %}
+  <div style="margin: 0 0 12px; padding: 10px 12px; background: #eef6ff; border: 1px solid #b9d6ef; border-radius: 4px; font-size: 0.9em;">
+    {{ scan_notice }}
+  </div>
+  {% endif %}
   <form id="booker" name="booker" action="/gn_ticket/book_sessions" method="post">
     <p>Sessions show here when their status is set to "Booked" and assigned to <strong>{{ user.name if user else 'you' }}</strong> in Nunavut, scheduled for today or later, and haven't had GN tickets requested yet. Check that these are ready, then click the button.</p>
 
@@ -441,14 +438,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     <input type="hidden" name="buffer_before" value="{{ buffer_before }}">
     <input type="hidden" name="buffer_after" value="{{ buffer_after }}">
-
-    <input type="submit" name="book_sessions" id="book_sessions" value="Book displayed sessions with GN">
-    {% else %}
-    <div style="margin: 15px 0; padding: 12px; background: #f0f8ff; border: 1px solid #b9d6ef; border-radius: 5px;">
-      <strong>Booking runs on a schedule here.</strong>
-      These sessions are booked automatically {{ auto_scan_time }}. To book one right now, use the desktop app.
-    </div>
     {% endif %}
+
+    <input type="submit" name="book_sessions" id="book_sessions" value="Book now"
+           formaction="{{ '/gn_ticket/book_sessions' if manual_booking_enabled else '/auto/run' }}">
+    <span style="margin-left: 10px; color: #555; font-size: 0.9em;">
+      Books every session below that has no conflict. Otherwise this happens on its own, {{ auto_scan_time }}.
+    </span>
 
     <!-- Session Gallery Section -->
     <h3>Current candidate sessions</h3>

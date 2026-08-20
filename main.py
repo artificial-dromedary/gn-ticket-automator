@@ -469,7 +469,6 @@ def gn_ticket_page():
             scan_frequency_choices=SCAN_FREQUENCY_CHOICES,
             manual_booking_enabled=MANUAL_BOOKING_ENABLED,
             scan_notice=session.pop('scan_notice', None),
-            on_demand_available=MANUAL_BOOKING_ENABLED or render_api.is_configured(),
             auto_scan_time=auto_scan_time_label(scan_frequency_hours),
             latest_scan=latest_scan,
             booking_busy_since=booking_in_progress(),
@@ -726,7 +725,7 @@ def run_auto_scan_now():
     if MANUAL_BOOKING_ENABLED:
         # Desktop build: do it here, where there is memory for a browser.
         threading.Thread(target=dispatch_scan, args=(user['email'],), daemon=True).start()
-        session['scan_notice'] = "Scan started."
+        session['scan_notice'] = "Booking started."
         return redirect(url_for('gn_ticket_page'))
 
     # Hosted: the scan job has the memory for Chrome, this process does not.

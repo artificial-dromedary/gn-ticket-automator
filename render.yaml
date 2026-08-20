@@ -17,6 +17,11 @@ envVarGroups:
         value: "1"
       - key: AUTO_SCAN_TZ
         value: America/Toronto
+      # End-of-day summary: the first hourly run at or after this local hour sends it.
+      - key: DAILY_SUMMARY_HOUR
+        value: "17"
+      - key: DAILY_SUMMARY_TZ
+        value: America/New_York
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
