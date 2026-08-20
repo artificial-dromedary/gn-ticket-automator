@@ -20,7 +20,7 @@ from conflict import check_for_time_conflicts
 from db import SessionLocal
 from emailer import send_booking_summary_email, send_conflict_email, send_daily_summary_email
 from models import (ConflictEmailLog, DailySummaryLog, ScanRequest, ScanResult,
-                    TaskLock, TicketSubmission, User)
+                    SessionExclusion, TaskLock, TicketSubmission, User)
 from ticket_submission_log import TicketSubmissionLog
 from user_profiles import DEFAULT_SCAN_FREQUENCY_HOURS, user_manager
 import gn_ticket
@@ -442,6 +442,82 @@ def clear_scan_request(user_email):
         db.commit()
 
 
+def excluded_session_ids(user_email):
+    """Sessions this person removed on the dashboard. Never booked automatically."""
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return set()
+        return {
+            session_id for (session_id,) in db.execute(
+                select(SessionExclusion.session_id).where(SessionExclusion.user_id == user.id)
+            ).all()
+        }
+
+
+def set_session_excluded(user_email, session_id, excluded, title=None, school=None,
+                         start_time=None):
+    """Record, or undo, a decision not to book a session. Idempotent either way."""
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return False
+
+        if not excluded:
+            db.execute(sa_delete(SessionExclusion).where(
+                SessionExclusion.user_id == user.id,
+                SessionExclusion.session_id == session_id,
+            ))
+            db.commit()
+            return True
+
+        existing = db.execute(select(SessionExclusion).where(
+            SessionExclusion.user_id == user.id,
+            SessionExclusion.session_id == session_id,
+        )).scalars().first()
+        if existing:
+            # Already removed; refresh the snapshot in case the session moved.
+            existing.title = title or existing.title
+            existing.school = school or existing.school
+            existing.start_time = start_time or existing.start_time
+        else:
+            db.add(SessionExclusion(user_id=user.id, session_id=session_id, title=title,
+                                    school=school, start_time=start_time))
+        db.commit()
+        return True
+
+
+def outstanding_exclusions(user_email, now=None):
+    """Removed sessions that have not happened yet — the ones still being held back.
+
+    A session in the past can never be booked again, so listing it would just grow
+    the daily email forever.
+    """
+    now = now or datetime.utcnow()
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return []
+        rows = db.execute(
+            select(SessionExclusion)
+            .where(SessionExclusion.user_id == user.id)
+            .order_by(SessionExclusion.start_time.asc())
+        ).scalars().all()
+
+    upcoming = []
+    for row in rows:
+        if row.start_time and row.start_time.replace(tzinfo=None) < now:
+            continue
+        upcoming.append({
+            "session_id": row.session_id,
+            "title": row.title,
+            "school": row.school,
+            "start_time": row.start_time.replace(tzinfo=timezone.utc).isoformat()
+            if row.start_time else None,
+        })
+    return upcoming
+
+
 def user_is_due(user_email, now=None):
     """Whether this user's chosen interval has elapsed since their last scan.
 
@@ -519,8 +595,13 @@ def _scan_user(user_email):
         airtable_client, candidate_sessions, user_email, window_past_days, window_future_days
     )
 
-    conflicts = [s for s in candidate_sessions if s.is_conflict]
-    clean = [s for s in candidate_sessions if not s.is_conflict]
+    # Sessions the person took off the list stay off it. Held back before anything
+    # else looks at them, so a removed session is never booked and never emailed
+    # about as a conflict either — the decision has already been made.
+    excluded = excluded_session_ids(user_email)
+    conflicts = [s for s in candidate_sessions if s.is_conflict and s.s_id not in excluded]
+    clean = [s for s in candidate_sessions
+             if not s.is_conflict and s.s_id not in excluded]
     conflict_payload = [_session_to_dict(s) for s in conflicts]
 
     logger.info("Scan for %s: %d candidate(s), %d clean, %d conflicted.",
@@ -586,9 +667,13 @@ def _book_sessions(user_email, session_ids, manual=False):
         airtable_client, candidate_sessions, user_email, window_past_days, window_future_days
     )
 
-    requested = set(session_ids)
+    # Re-read rather than trusting the ids we were handed: someone may have removed a
+    # session on the dashboard between the scan and this run.
+    excluded = excluded_session_ids(user_email)
+    requested = {sid for sid in session_ids if sid not in excluded}
     send_to_gn = [s for s in candidate_sessions if s.s_id in requested and not s.is_conflict]
-    conflicted = [_session_to_dict(s) for s in candidate_sessions if s.is_conflict]
+    conflicted = [_session_to_dict(s) for s in candidate_sessions
+                  if s.is_conflict and s.s_id not in excluded]
 
     def report(successful=None, failed=None):
         """Tell the person who pressed the button how it went. Only they are waiting
@@ -600,6 +685,11 @@ def _book_sessions(user_email, session_ids, manual=False):
                                        conflict_sessions=conflicted, manual=True)
         except Exception as exc:
             logger.error("Could not send booking summary to %s: %s", user_email, exc)
+
+    removed = len(session_ids) - len(requested)
+    if removed > 0:
+        logger.info("Holding back %d of %d session(s) for %s: removed on the dashboard.",
+                    removed, len(session_ids), user_email)
 
     skipped = len(requested) - len(send_to_gn)
     if skipped > 0:
@@ -780,6 +870,7 @@ def send_daily_summaries(force=False):
                 sessions_booked_on(email, now_local.date()),
                 outstanding_conflicts(email),
                 summary_date,
+                excluded_sessions=outstanding_exclusions(email),
             )
             _record_summary_sent(email, summary_date)
             sent += 1

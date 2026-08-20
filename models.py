@@ -80,6 +80,28 @@ class ConflictEmailLog(Base):
     emailed_at = Column(DateTime, default=utcnow)
 
 
+class SessionExclusion(Base):
+    """A session the person removed on the dashboard, held back from every future run.
+
+    "Remove" used to last only until the page was reloaded, so a session someone had
+    deliberately taken out came straight back and was booked by the next scheduled
+    run. A row here is the decision, and it stands until they put the session back.
+
+    The title/school/start are a snapshot taken when it was removed, so the daily
+    summary can name the session without going back to Airtable for something that
+    is deliberately not in the candidate list any more.
+    """
+    __tablename__ = "session_exclusions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    session_id = Column(String(255), nullable=False, index=True)
+    title = Column(String(512))
+    school = Column(String(512))
+    start_time = Column(DateTime)
+    excluded_at = Column(DateTime, default=utcnow, nullable=False)
+
+
 class TaskLock(Base):
     """Cross-process mutex.
 

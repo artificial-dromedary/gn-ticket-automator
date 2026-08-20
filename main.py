@@ -452,6 +452,9 @@ def gn_ticket_page():
         submitted_ticket_log = ticket_log.get_entries(user['email'], window_past_days=window_past_days)
         submitted_ticket_log = sorted(submitted_ticket_log, key=lambda entry: entry.get('submitted_at', ''), reverse=True)
 
+        # Sessions taken off the list previously. They stay off it until put back.
+        excluded_ids = tasks.excluded_session_ids(user['email'])
+
         session['book_session_ids'] = [s.s_id for s in candidate_sessions]
 
         latest_conflicts = []
@@ -491,6 +494,7 @@ def gn_ticket_page():
             submitted_ticket_log=submitted_ticket_log,
             latest_conflicts=latest_conflicts,
             emailed_conflict_ids=emailed_conflict_ids,
+            excluded_ids=excluded_ids,
             user=user,
             buffer_before=buffer_before,
             buffer_after=buffer_after,
@@ -531,6 +535,8 @@ def do_gn_ticket():
     selected_ids = set(get_enabled_sessions(request))
     candidate_ids = set(session.get('book_session_ids', []))
     effective_ids = selected_ids.intersection(candidate_ids) if candidate_ids else selected_ids
+    # A removed session is never booked, whatever the form happens to say.
+    effective_ids -= tasks.excluded_session_ids(user['email'])
 
     airtable_client = create_airtable_client(profile['airtable_api_key'])
     candidate_sessions = airtable_client.get_booked_sessions(
@@ -662,6 +668,43 @@ def record_conflict_email():
         return jsonify({'ok': True})
     except Exception as e:
         logging.error(f"conflict_emailed error: {e}", exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route("/gn_ticket/set_excluded", methods=["POST"])
+@require_auth
+def set_session_excluded_route():
+    """Remove a session from booking, or put it back. Sticks across future runs."""
+    user = session['user']
+    data = request.get_json(silent=True) or {}
+    session_id = (data.get('session_id') or '').strip()
+    if not session_id:
+        return jsonify({'ok': False, 'error': 'missing session_id'}), 400
+
+    excluded = bool(data.get('excluded'))
+    start_time = None
+    raw_start = (data.get('start_time') or '').strip()
+    if raw_start:
+        try:
+            parsed = datetime.fromisoformat(raw_start.replace('Z', '+00:00'))
+            # Stored naive UTC, matching every other timestamp in the database.
+            start_time = (parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                          if parsed.tzinfo else parsed)
+        except ValueError:
+            logging.info("Ignoring unparseable start_time %r for %s", raw_start, session_id)
+
+    try:
+        ok = tasks.set_session_excluded(
+            user['email'], session_id, excluded,
+            title=(data.get('title') or '').strip() or None,
+            school=(data.get('school') or '').strip() or None,
+            start_time=start_time,
+        )
+        if not ok:
+            return jsonify({'ok': False, 'error': 'user not found'}), 404
+        return jsonify({'ok': True, 'excluded': excluded})
+    except Exception as e:
+        logging.error(f"set_excluded error: {e}", exc_info=True)
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 

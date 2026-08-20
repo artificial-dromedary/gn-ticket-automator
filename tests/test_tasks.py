@@ -15,7 +15,10 @@ from user_profiles import user_manager
 
 
 USER_EMAIL = "lead@takingitglobal.org"
-BASE_TIME = datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc)
+# Relative to now, not a fixed date: candidates have to stay comfortably outside the
+# last-minute window, and a hardcoded date silently walks into it as time passes.
+BASE_TIME = (datetime.now(timezone.utc) + timedelta(days=30)).replace(
+    hour=15, minute=0, second=0, microsecond=0)
 
 
 class FakeSession:
