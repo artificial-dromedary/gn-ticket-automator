@@ -708,6 +708,30 @@ def set_session_excluded_route():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route("/gn_ticket/set_lookahead", methods=["POST"])
+@require_auth
+def set_lookahead_route():
+    """Save the look-ahead slider. It is a preference, not a view setting: the
+    scheduled run reads the same window, so moving the slider also decides how far
+    ahead auto-booking reaches."""
+    user = session['user']
+    data = request.get_json(silent=True) or {}
+    if 'window_future_days' not in data:
+        return jsonify({'ok': False, 'error': 'missing window_future_days'}), 400
+
+    window_future_days = normalize_lookahead(data.get('window_future_days'))
+    try:
+        user_manager.update_preferences(user['email'],
+                                        {'window_future_days': window_future_days})
+    except Exception as e:
+        logging.error(f"set_lookahead error: {e}", exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    label = next((lbl for days, lbl in LOOKAHEAD_STOPS if days == window_future_days),
+                 str(window_future_days))
+    return jsonify({'ok': True, 'window_future_days': window_future_days, 'label': label})
+
+
 @app.route("/progress/<session_id>")
 @require_auth
 def stream_session_progress(session_id):

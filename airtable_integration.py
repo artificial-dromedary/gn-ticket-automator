@@ -10,6 +10,18 @@ logger = logging.getLogger(__name__)
 REQUEST_TIMEOUT = int(os.getenv("REQUESTS_TIMEOUT", "15"))
 
 
+def future_cutoff(window_future_days):
+    """Airtable expression for the far edge of the look-ahead window.
+
+    DATEADD(TODAY(), N, 'day') is midnight at the *start* of day N, so comparing
+    against it stops at the end of day N-1. The look-ahead slider means "through
+    the end of day N", which the dashboard's own filtering already assumes — most
+    visibly at its first stop, "Today" (0 days), where the previous formula matched
+    nothing at all instead of the rest of today.
+    """
+    return f"DATEADD(TODAY(), {int(window_future_days) + 1}, 'day')"
+
+
 class AirtableSession:
     """Represents a session from Airtable"""
 
@@ -203,7 +215,7 @@ class AirtableIntegration:
                 # conflict lookups, which do need to see backwards.
                 filter_parts.append("IS_AFTER({Session Start Date/Time}, NOW())")
                 filter_parts.append(
-                    f"IS_BEFORE({{Session Start Date/Time}}, DATEADD(TODAY(), {int(window_future_days)}, 'day'))"
+                    f"IS_BEFORE({{Session Start Date/Time}}, {future_cutoff(window_future_days)})"
                 )
 
                 # ADDED: Exclude sessions where GN Ticket has already been requested
@@ -327,7 +339,7 @@ class AirtableIntegration:
                 f"IS_AFTER({{Session Start Date/Time}}, DATEADD(TODAY(), -{int(window_past_days)}, 'day'))"
             )
             filter_parts.append(
-                f"IS_BEFORE({{Session Start Date/Time}}, DATEADD(TODAY(), {int(window_future_days)}, 'day'))"
+                f"IS_BEFORE({{Session Start Date/Time}}, {future_cutoff(window_future_days)})"
             )
 
             # Combine filters
