@@ -13,8 +13,15 @@ envVarGroups:
       # Generate once; losing it means every user redoes the setup wizard.
       - key: APP_ENCRYPTION_KEY
         generateValue: true
+      # NOTE: this entry does not create anything. Render only prompts for sync:false
+      # values during initial Blueprint creation and ignores them on later syncs, and
+      # it ignores sync:false inside envVarGroups entirely — the same is true of the
+      # SMTP_* and CHATGPT_API_KEY entries below. Every one of these has to be added
+      # to the gn-ticket-shared group by hand in the dashboard. They are listed here
+      # so the blueprint still records what the services need in order to run.
+      #
       # The database is created and managed by hand rather than by this blueprint, so
-      # the URL is set in the dashboard. It lives in the shared group, not on each
+      # the URL is set in the dashboard. It belongs in the shared group, not on each
       # service, because it was previously declared twice — and repointing at a new
       # database updated one of them and left the cron job talking to a host that no
       # longer resolved. One declaration cannot drift from itself.
