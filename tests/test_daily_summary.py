@@ -188,3 +188,39 @@ def test_a_failed_send_is_retried_on_the_next_run(monkeypatch, registered_user):
 
     assert tasks.send_daily_summaries() == 1
     assert delivered == [USER_EMAIL]
+
+
+def test_the_summary_reads_in_edmonton_time_and_marks_the_zone(monkeypatch):
+    """The people reading it are in Edmonton, so the times must not need converting."""
+    import emailer
+
+    body = {}
+    monkeypatch.setattr(emailer, "_send",
+                        lambda to, subject, text: body.update({"to": to, "text": text}))
+
+    emailer.send_daily_summary_email(
+        USER_EMAIL,
+        booked_sessions=[{"title": "Session", "school": "Nakasuk School",
+                          "ticket_id": "REQ001", "start_time": "2026-08-19T20:36:00+00:00"}],
+        conflict_sessions=[],
+        summary_date="2026-08-19")
+
+    assert "All times below are Edmonton time." in body["text"]
+    # 20:36 UTC is 2:36 pm in Edmonton — and 4:36 pm Eastern, where this used to land.
+    assert "Wed, Aug 19 at 2:36 pm MDT" in body["text"]
+
+
+def test_every_email_marks_its_timezone(monkeypatch):
+    """A bare '2:36 pm' is a guess for anyone who is not sure where the app thinks it is."""
+    import emailer
+
+    sent = []
+    monkeypatch.setattr(emailer, "_send", lambda to, subject, text: sent.append(text))
+    session = {"title": "Session", "school": "Nakasuk School", "ticket_id": "REQ001",
+               "start_time": "2026-01-19T20:36:00+00:00"}
+
+    emailer.send_conflict_email(USER_EMAIL, [session])
+    emailer.send_booking_summary_email(USER_EMAIL, [session], [], manual=True)
+
+    # January, so Mountain is on standard time.
+    assert all("Mon, Jan 19 at 1:36 pm MST" in text for text in sent)

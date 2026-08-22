@@ -5,15 +5,25 @@ from email.message import EmailMessage
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Timestamps are stored as naive UTC but read by people in one place, so anything
-# shown on a page or in an email is rendered in this zone.
-DISPLAY_TZ = os.getenv("AUTO_SCAN_TZ", "America/Toronto")
+# shown on a page or in an email is rendered in this zone. Deliberately its own
+# setting rather than AUTO_SCAN_TZ: that one says when the scheduled scan fires,
+# and the two answer different questions. Everyone reading this today is in
+# Edmonton; when that stops being true this becomes a per-user preference.
+DISPLAY_TZ = os.getenv("DISPLAY_TZ", "America/Edmonton")
 
 
-def friendly_datetime(value, fallback="unknown"):
-    """Render a timestamp as 'Wed, Aug 19 at 8:36 pm' in the display timezone.
+def display_timezone_label():
+    """Name the display zone as a person would: 'Edmonton' from 'America/Edmonton'."""
+    return DISPLAY_TZ.rsplit("/", 1)[-1].replace("_", " ")
+
+
+def friendly_datetime(value, fallback="unknown", tz=None):
+    """Render a timestamp as 'Wed, Aug 19 at 8:36 pm MDT' in the display timezone.
 
     Accepts an ISO string or a datetime. A naive value is taken as UTC, which is how
-    every timestamp in this app is stored.
+    every timestamp in this app is stored. The zone abbreviation is always shown, so
+    a time is never ambiguous to a reader somewhere else. Pass `tz` to render in a
+    zone other than the default display one.
     """
     if not value:
         return fallback
@@ -31,7 +41,7 @@ def friendly_datetime(value, fallback="unknown"):
         moment = moment.replace(tzinfo=timezone.utc)
 
     try:
-        local = moment.astimezone(ZoneInfo(DISPLAY_TZ))
+        local = moment.astimezone(ZoneInfo(tz or DISPLAY_TZ))
     except ZoneInfoNotFoundError:
         local = moment.astimezone(timezone.utc)
 
@@ -39,7 +49,8 @@ def friendly_datetime(value, fallback="unknown"):
     day = str(local.day)
     hour = str((local.hour % 12) or 12)
     meridiem = "am" if local.hour < 12 else "pm"
-    return f"{local:%a}, {local:%b} {day} at {hour}:{local:%M} {meridiem}"
+    zone = local.tzname() or ""
+    return f"{local:%a}, {local:%b} {day} at {hour}:{local:%M} {meridiem} {zone}".strip()
 
 
 def _send(to_email, subject, body):
@@ -159,7 +170,8 @@ def send_daily_summary_email(to_email, booked_sessions, conflict_sessions, summa
     conflict_sessions = conflict_sessions or []
     excluded_sessions = excluded_sessions or []
 
-    lines = [f"GN ticket summary for {summary_date}.", ""]
+    lines = [f"GN ticket summary for {summary_date}.",
+             f"All times below are {display_timezone_label()} time.", ""]
 
     if booked_sessions:
         lines.append(f"BOOKED TODAY ({len(booked_sessions)})")

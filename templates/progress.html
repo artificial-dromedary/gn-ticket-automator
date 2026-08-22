@@ -346,7 +346,7 @@ function appendLogRow(entry) {
   const tr = document.createElement('tr');
   const reqLabel = entry.message && entry.message !== 'submitted' ? entry.message : '—';
   const sess = sessionMap[entry.session_ref] || {};
-  const sessionTimeStr = sess.start_time_iso ? formatLocalTime(sess.start_time_iso) : '—';
+  const sessionTimeStr = sess.start_time_iso ? formatDisplayTime(sess.start_time_iso) : '—';
   tr.innerHTML =
     '<td><span class="req-badge">' + reqLabel + '</span></td>' +
     '<td>' + (sess.title || '—') + '</td>' +
@@ -381,30 +381,33 @@ function refreshProgress() {
     .catch(console.error);
 }
 
-function formatLocalTime(isoString) {
+// One zone for everyone, marked with its abbreviation, rather than whatever the
+// browser is set to — two people comparing screens should read the same times.
+const DISPLAY_TIMEZONE = '{{ display_timezone }}';
+
+function formatDisplayTime(isoString) {
   if (!isoString) return '';
   try {
     const d = new Date(isoString);
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const formatted = new Intl.DateTimeFormat('en-CA', {
       weekday: 'short', month: 'short', day: 'numeric',
       hour: 'numeric', minute: '2-digit',
-      timeZone: tz, timeZoneName: 'short'
+      timeZone: DISPLAY_TIMEZONE, timeZoneName: 'short'
     }).format(d);
     return formatted;
   } catch(e) { return isoString; }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-  // Format all card times in browser local timezone
+  // Format all card times in the app's display timezone
   document.querySelectorAll('.card-time[data-iso]').forEach(function(el) {
     const iso = el.dataset.iso;
-    if (iso) el.textContent = formatLocalTime(iso);
+    if (iso) el.textContent = formatDisplayTime(iso);
   });
   // Format session date/time and submitted date/time columns in the log table
   document.querySelectorAll('.log-session-time[data-iso], .log-submitted-time[data-iso]').forEach(function(el) {
     const iso = el.dataset.iso;
-    if (iso) el.textContent = formatLocalTime(iso);
+    if (iso) el.textContent = formatDisplayTime(iso);
   });
 
   startStream();
