@@ -526,6 +526,10 @@ function openConflictEmail(btn) {
   btn.replaceWith(badge);
 }
 
+// Every time on this page is shown in one zone, marked with its abbreviation, so
+// nobody has to know where the browser they opened it in happens to be.
+const DISPLAY_TIMEZONE = '{{ display_timezone }}';
+
 document.addEventListener('DOMContentLoaded', function() {
   const timeElements = document.querySelectorAll('.session-time[data-time]');
   timeElements.forEach(function(element) {
@@ -535,7 +539,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (isNaN(parsedDate.getTime())) return;
     const formatted = new Intl.DateTimeFormat([], {
       year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
+      hour: 'numeric', minute: '2-digit', hour12: true,
+      timeZone: DISPLAY_TIMEZONE, timeZoneName: 'short'
     }).format(parsedDate);
     element.textContent = formatted;
   });
@@ -550,10 +555,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return;
     const startFormatted = new Intl.DateTimeFormat([], {
       month: 'short', day: '2-digit',
-      hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
+      hour: 'numeric', minute: '2-digit', hour12: true,
+      timeZone: DISPLAY_TIMEZONE, timeZoneName: 'short'
     }).format(startDate);
     const endFormatted = new Intl.DateTimeFormat([], {
-      hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
+      hour: 'numeric', minute: '2-digit', hour12: true,
+      timeZone: DISPLAY_TIMEZONE, timeZoneName: 'short'
     }).format(endDate);
     element.textContent = ` (${startFormatted} – ${endFormatted}).`;
   });
@@ -635,7 +642,7 @@ document.addEventListener('DOMContentLoaded', function() {
       {% if booking_busy_since %}
       <div style="margin-top: 12px; padding: 10px 12px; background: #fff6e0; border: 1px solid #e6c682; border-radius: 4px; font-size: 0.9em;">
         <strong>A booking run is in progress.</strong>
-        Started {{ booking_busy_since.strftime('%H:%M') }} UTC. Only one runs at a time —
+        Started {{ booking_busy_since | friendly_datetime }}. Only one runs at a time —
         if you start another it will wait its turn rather than fail.
       </div>
       {% endif %}
@@ -769,7 +776,7 @@ document.addEventListener('DOMContentLoaded', function() {
           </div>
 
           <div class="session-meta">
-            <span class="session-time" data-time="{{ session.start_time.isoformat() if session.start_time else '' }}">{{ session.start_time.strftime('%Y-%m-%d %I:%M %p') if session.start_time else 'Not set' }}</span>
+            <span class="session-time" data-time="{{ session.start_time.isoformat() if session.start_time else '' }}">{{ session.start_time | friendly_datetime('Not set') }}</span>
             · {{ session.length }} min
             · {% if session.zoom_link and session.zoom_link.strip() %}<span class="status-good">✅ Zoom</span>{% else %}<span class="status-bad">❌ No Zoom</span>{% endif %}
           </div>
@@ -806,10 +813,10 @@ document.addEventListener('DOMContentLoaded', function() {
             <td>{{ entry.title }}</td>
             <td>{{ entry.school }}</td>
             <td>
-              <span class="session-time" data-time="{{ entry.start_time or '' }}">{{ entry.start_time or 'Unknown' }}</span>
+              <span class="session-time" data-time="{{ entry.start_time or '' }}">{{ entry.start_time | friendly_datetime('Unknown') }}</span>
             </td>
             <td>
-              <span class="session-time" data-time="{{ entry.submitted_at or '' }}">{{ entry.submitted_at or 'Unknown' }}</span>
+              <span class="session-time" data-time="{{ entry.submitted_at or '' }}">{{ entry.submitted_at | friendly_datetime('Unknown') }}</span>
             </td>
           </tr>
           {% endfor %}
@@ -838,7 +845,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <td>{{ entry.title }}</td>
             <td>{{ entry.school }}</td>
             <td>
-              <span class="session-time" data-time="{{ entry.start_time or '' }}">{{ entry.start_time or 'Unknown' }}</span>
+              <span class="session-time" data-time="{{ entry.start_time or '' }}">{{ entry.start_time | friendly_datetime('Unknown') }}</span>
             </td>
             <td>{{ entry.conflict_details or 'Conflict detected' }}</td>
           </tr>

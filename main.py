@@ -106,7 +106,7 @@ from ticket_submission_log import TicketSubmissionLog
 from google_auth_oauthlib.flow import Flow
 from collections import deque
 from conflict import check_for_time_conflicts
-from emailer import friendly_datetime, send_booking_summary_email
+from emailer import DISPLAY_TZ, friendly_datetime, send_booking_summary_email
 from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
 import tasks
@@ -171,6 +171,9 @@ app.config['SESSION_CLEANUP_N_REQUESTS'] = 200
 Session(app)
 
 app.jinja_env.filters['friendly_datetime'] = friendly_datetime
+# The pages re-render times in the browser, so the templates need the same zone the
+# server-rendered ones use — otherwise the two disagree on a machine set elsewhere.
+app.jinja_env.globals['display_timezone'] = DISPLAY_TZ
 
 
 def notify_booking_finished(user_email, successful, failed, conflicts=None):

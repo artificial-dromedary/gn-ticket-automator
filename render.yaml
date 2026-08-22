@@ -43,6 +43,11 @@ envVarGroups:
         value: "1"
       - key: AUTO_SCAN_TZ
         value: America/Toronto
+      # The zone every time is shown in, on the pages and in the emails, marked with
+      # its abbreviation so it is never ambiguous. Separate from AUTO_SCAN_TZ, which
+      # only says when the scheduled scan fires.
+      - key: DISPLAY_TZ
+        value: America/Edmonton
       # End-of-day summary: the first hourly run at or after this local hour sends it.
       - key: DAILY_SUMMARY_HOUR
         value: "17"
