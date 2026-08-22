@@ -53,12 +53,35 @@ def test_candidates_do_not_reach_into_the_past(monkeypatch):
 
 
 def test_the_forward_window_still_applies(monkeypatch):
+    """90 days means through the end of the 90th day, so the cutoff is day 91."""
     client = AirtableIntegration("patTest")
 
     formula = capture_filter(monkeypatch, lambda: client.get_booked_sessions(
         user_email="lead@takingitglobal.org", window_past_days=14, window_future_days=90))
 
-    assert "DATEADD(TODAY(), 90, 'day')" in formula
+    assert "DATEADD(TODAY(), 91, 'day')" in formula
+
+
+def test_today_still_matches_the_rest_of_today(monkeypatch):
+    """The regression: a 0 day window asked for sessions before this morning, so the
+    "Today" stop found nothing and the scheduled run booked nothing."""
+    client = AirtableIntegration("patTest")
+
+    formula = capture_filter(monkeypatch, lambda: client.get_booked_sessions(
+        user_email="lead@takingitglobal.org", window_past_days=14, window_future_days=0))
+
+    assert "DATEADD(TODAY(), 1, 'day')" in formula
+    assert "DATEADD(TODAY(), 0, 'day')" not in formula
+
+
+def test_the_conflict_lookup_uses_the_same_horizon(monkeypatch):
+    client = AirtableIntegration("patTest")
+
+    formula = capture_filter(monkeypatch, lambda: client.get_all_sessions_for_schools(
+        ["Nakasuk School"], status_filters=["Booked"], window_past_days=14,
+        window_future_days=0))
+
+    assert "DATEADD(TODAY(), 1, 'day')" in formula
 
 
 def test_conflict_lookups_still_look_backwards(monkeypatch):
