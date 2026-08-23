@@ -2,9 +2,11 @@
 
 The cron job fires hourly and asks each opted-in user whether their chosen
 interval has elapsed, so 1/5/12/24 hours is a dashboard setting rather than a
-schedule change.
+schedule change. The daily interval also says which of the 24 hours it uses:
+9am Eastern, rather than wherever the last scan happened to leave it.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -30,6 +32,15 @@ def record_scan_at(email, when):
         user = db.execute(select(User).where(User.email == email)).scalar_one()
         db.add(ScanResult(user_id=user.id, scanned_at=when, summary="{}"))
         db.commit()
+
+
+EASTERN = ZoneInfo("America/New_York")
+
+
+def eastern(local):
+    """A wall-clock time in Eastern, as the naive UTC the scan code works in."""
+    moment = datetime.strptime(local, "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def test_the_offered_intervals():
@@ -66,13 +77,15 @@ def test_a_user_becomes_due_once_the_interval_elapses(registered_user):
 
 def test_a_shorter_interval_comes_due_sooner(registered_user):
     """The same elapsed time reads differently at 1 hour and at 24."""
-    record_scan_at(USER_EMAIL, datetime.utcnow() - timedelta(hours=2))
+    # Pinned off the daily hour: at 9am a daily user is due whatever the elapsed time.
+    now = eastern("2026-07-15 14:00")
+    record_scan_at(USER_EMAIL, now - timedelta(hours=2))
 
     set_frequency(USER_EMAIL, 1)
-    assert tasks.user_is_due(USER_EMAIL) is True
+    assert tasks.user_is_due(USER_EMAIL, now=now) is True
 
     set_frequency(USER_EMAIL, 24)
-    assert tasks.user_is_due(USER_EMAIL) is False
+    assert tasks.user_is_due(USER_EMAIL, now=now) is False
 
 
 def test_an_hourly_user_is_not_pushed_to_two_hours_by_drift(registered_user):
@@ -117,4 +130,81 @@ def test_the_frequency_survives_a_round_trip(registered_user):
 def test_the_label_reads_naturally():
     assert tasks.auto_scan_time_label(1) == "every hour"
     assert tasks.auto_scan_time_label(5) == "every 5 hours"
-    assert tasks.auto_scan_time_label(24) == "once a day"
+    assert tasks.auto_scan_time_label(24).startswith("once a day, at 9am")
+
+
+# The daily interval and the hour it lands on. The cron job still fires hourly —
+# a user set to "every hour" needs it to — so what pins the once-a-day scan to
+# the morning is which of those 24 ticks a daily user answers "due" on.
+
+def test_a_daily_user_is_due_at_nine_eastern(registered_user):
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-07-14 09:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-15 09:00")) is True
+
+
+def test_a_daily_user_is_not_due_in_the_middle_of_the_night(registered_user):
+    """The whole point: 3am is a tick like any other, and daily users skip it."""
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-07-14 09:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-15 03:00")) is False
+
+
+def test_a_daily_user_is_not_due_again_later_the_same_day(registered_user):
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-07-15 09:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-15 10:00")) is False
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-15 23:00")) is False
+
+
+def test_an_afternoon_scan_does_not_drag_tomorrow_into_the_afternoon(registered_user):
+    """Pressing "Run scan now" at 4pm must not move the daily scan to 4pm."""
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-07-14 16:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-15 09:00")) is True
+
+
+def test_nine_eastern_survives_daylight_saving(registered_user):
+    """Same wall-clock hour in winter, an hour later in UTC. Both are 9am to a user."""
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-01-14 09:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-01-15 08:00")) is False
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-01-15 09:00")) is True
+
+
+def test_a_missed_morning_is_caught_up_rather_than_skipped_for_a_day(registered_user):
+    """A failed 9am run should cost hours, not until tomorrow morning."""
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-07-14 09:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-15 10:00")) is True
+
+
+def test_a_catch_up_does_not_move_the_next_morning(registered_user):
+    """Tomorrow is anchored to the clock, not to whenever the catch-up ran."""
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-07-15 11:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-16 09:00")) is True
+
+
+def test_shorter_intervals_still_run_at_any_hour(registered_user):
+    """Only the daily interval gets an opinion about the hour."""
+    set_frequency(USER_EMAIL, 5)
+    record_scan_at(USER_EMAIL, eastern("2026-07-15 21:00"))
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-16 02:00")) is True
+
+
+def test_asking_for_a_scan_still_beats_the_hour(registered_user):
+    """An explicit request is not made to wait until the morning."""
+    set_frequency(USER_EMAIL, 24)
+    record_scan_at(USER_EMAIL, eastern("2026-07-15 09:00"))
+    tasks.request_scan(USER_EMAIL)
+
+    assert tasks.user_is_due(USER_EMAIL, now=eastern("2026-07-15 16:00")) is True

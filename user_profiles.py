@@ -15,7 +15,9 @@ ensure_column("user_preferences", "scan_frequency_hours", "INTEGER", "24")
 
 
 # How often a user's scheduled scan runs. The cron job fires hourly and skips
-# anyone not yet due, so anything coarser than hourly is a per-user choice.
+# anyone not yet due, so anything coarser than hourly is a per-user choice. The
+# 24 hour choice also picks its hour — see DAILY_SCAN_HOUR in tasks.py — rather
+# than drifting to wherever the user's last scan left it.
 SCAN_FREQUENCY_CHOICES = (1, 5, 12, 24)
 DEFAULT_SCAN_FREQUENCY_HOURS = 24
 

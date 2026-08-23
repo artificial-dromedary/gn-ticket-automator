@@ -41,8 +41,15 @@ envVarGroups:
         sync: false
       - key: GN_INLINE_TASKS
         value: "1"
+      # The zone the schedule is read in — not the zone times are displayed in,
+      # which is DISPLAY_TZ below.
       - key: AUTO_SCAN_TZ
-        value: America/Toronto
+        value: America/New_York
+      # Which hour a once-a-day scan lands on, in AUTO_SCAN_TZ. Shorter intervals
+      # fall where they fall; a daily one would otherwise sit at whatever hour the
+      # user's first scan happened to run, 3am included.
+      - key: DAILY_SCAN_HOUR
+        value: "9"
       # The zone every time is shown in, on the pages and in the emails, marked with
       # its abbreviation so it is never ambiguous. Separate from AUTO_SCAN_TZ, which
       # only says when the scheduled scan fires.
@@ -112,6 +119,8 @@ services:
     # Fires hourly and scans only the users whose chosen interval has elapsed, so
     # per-person frequency (1/5/12/24h) is a dashboard setting rather than a schedule
     # change. A run with nobody due exits in seconds, and cron jobs bill per minute.
+    # The hourly tick is what an "every hour" user needs; a daily user answers "due"
+    # on one tick of the 24, the one at DAILY_SCAN_HOUR in AUTO_SCAN_TZ.
     schedule: "0 * * * *"
     dockerCommand: python run_scan.py
     envVars:

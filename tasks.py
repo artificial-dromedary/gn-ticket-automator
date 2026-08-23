@@ -67,8 +67,21 @@ BUSY_MAX_WAIT_SECONDS = int(os.getenv("GN_BUSY_MAX_WAIT_SECONDS", str(60 * 60)))
 # How often to announce that we are still waiting, so logs don't fill with notices.
 BUSY_NOTICE_SECONDS = int(os.getenv("GN_BUSY_NOTICE_SECONDS", "300"))
 
+# The zone the schedule is read in. Separate from DISPLAY_TZ, which is the zone
+# times are shown in: this one says when things fire.
+SCAN_TZ = os.getenv("AUTO_SCAN_TZ", "America/New_York")
+
+# Which hour a once-a-day scan lands on, in SCAN_TZ. An interval shorter than a
+# day has to fall where it falls, but a daily user has 24 hours to choose from
+# and no reason to be scanned at 3am because that is when they first signed up.
+DAILY_SCAN_HOUR = int(os.getenv("DAILY_SCAN_HOUR", "9"))
+
+# A missed daily run — a failed job, a deploy, an outage — should cost hours, not
+# a whole day. Past this, the next hourly tick catches the user up.
+MISSED_DAILY_SCAN_GRACE = timedelta(hours=25)
+
 celery_app = Celery("gn_ticket", broker=REDIS_URL, backend=REDIS_URL)
-celery_app.conf.timezone = os.getenv("AUTO_SCAN_TZ", "America/Toronto")
+celery_app.conf.timezone = SCAN_TZ
 celery_app.conf.beat_schedule = {
     "daily_auto_scan": {
         "task": "tasks.run_scheduled_scan",
@@ -82,13 +95,21 @@ celery_app.conf.beat_schedule = {
 logger = logging.getLogger(__name__)
 
 
+def daily_scan_time_label():
+    """The hour a daily scan lands on, marked with its zone: '9am EDT'."""
+    suffix = "am" if DAILY_SCAN_HOUR < 12 else "pm"
+    clock = DAILY_SCAN_HOUR % 12 or 12
+    abbreviation = datetime.now(_scan_zone()).strftime("%Z")
+    return f"{clock}{suffix} {abbreviation}".strip()
+
+
 def auto_scan_time_label(frequency_hours=None):
     """Human-readable description of how often the scheduled scan runs."""
     hours = frequency_hours or DEFAULT_SCAN_FREQUENCY_HOURS
     if hours == 1:
         return "every hour"
     if hours == 24:
-        return "once a day"
+        return f"once a day, at {daily_scan_time_label()}"
     return f"every {hours} hours"
 
 
@@ -524,6 +545,11 @@ def user_is_due(user_email, now=None):
     The cron job fires hourly and asks this of everyone, so a user on a 24 hour
     interval is simply skipped 23 times out of 24 — unless they have asked for a
     scan explicitly, which overrides the interval.
+
+    Which 23 it skips matters, though. A daily interval leaves 24 hours to choose
+    from, and elapsed time alone would hand that choice to whenever the user last
+    happened to be scanned — 3am for anyone whose first scan landed there. Daily
+    users are pinned to DAILY_SCAN_HOUR instead; see _daily_scan_is_due.
     """
     if has_pending_request(user_email):
         return True
@@ -539,9 +565,44 @@ def user_is_due(user_email, now=None):
     if previous.tzinfo is not None:
         previous = previous.replace(tzinfo=None)
 
+    if hours >= 24:
+        return _daily_scan_is_due(previous, now)
+
     # A little grace, or an hourly job whose runs drift by seconds would push a
     # 1 hour interval out to 2 hours.
     return previous + timedelta(hours=hours) - timedelta(minutes=5) <= now
+
+
+def _scan_zone():
+    try:
+        return ZoneInfo(SCAN_TZ)
+    except Exception:
+        logger.warning("Unknown AUTO_SCAN_TZ %r; reading the schedule in UTC.", SCAN_TZ)
+        return timezone.utc
+
+
+def _daily_scan_is_due(previous, now):
+    """Whether a once-a-day user is due, given naive-UTC `previous` and `now`.
+
+    "Has a day elapsed" is the wrong question for a daily user: someone who
+    pressed "Run scan now" at 4pm would have their next scan fall due at 4pm the
+    following day, and stay there — which is the drift this exists to remove. The
+    question is whether today's scheduled scan has happened yet.
+
+    The hourly cron and the local hour do the rest of the work between them: this
+    is true on exactly one tick a day, and it is true on the same wall-clock tick
+    on both sides of a daylight saving change.
+    """
+    local_now = now.replace(tzinfo=timezone.utc).astimezone(_scan_zone())
+
+    if local_now.hour == DAILY_SCAN_HOUR:
+        todays_run = local_now.replace(minute=0, second=0, microsecond=0)
+        if previous < todays_run.astimezone(timezone.utc).replace(tzinfo=None):
+            return True
+
+    # Missing the scheduled hour should not cost a whole day. Catching up here
+    # does not move tomorrow's run: that one is anchored to the clock, not to this.
+    return previous + MISSED_DAILY_SCAN_GRACE <= now
 
 
 @celery_app.task(name="tasks.run_scheduled_scan")
