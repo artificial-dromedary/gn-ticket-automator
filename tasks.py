@@ -67,8 +67,18 @@ BUSY_MAX_WAIT_SECONDS = int(os.getenv("GN_BUSY_MAX_WAIT_SECONDS", str(60 * 60)))
 # How often to announce that we are still waiting, so logs don't fill with notices.
 BUSY_NOTICE_SECONDS = int(os.getenv("GN_BUSY_NOTICE_SECONDS", "300"))
 
+# The zone the schedule is read in. Separate from DISPLAY_TZ, which is the zone
+# times are shown in: this one says when things fire.
+SCAN_TZ = os.getenv("AUTO_SCAN_TZ", "America/New_York")
+
+# Every interval is measured out from this hour, in SCAN_TZ. Left to elapsed time
+# alone the hour would be whenever the user's first scan happened to land — 3am
+# for anyone unlucky — and an on-demand scan would move it again. Anchoring means
+# a daily user is scanned at 9am, a twice-daily one at 9am and 9pm, and so on.
+SCAN_ANCHOR_HOUR = int(os.getenv("SCAN_ANCHOR_HOUR", "9"))
+
 celery_app = Celery("gn_ticket", broker=REDIS_URL, backend=REDIS_URL)
-celery_app.conf.timezone = os.getenv("AUTO_SCAN_TZ", "America/Toronto")
+celery_app.conf.timezone = SCAN_TZ
 celery_app.conf.beat_schedule = {
     "daily_auto_scan": {
         "task": "tasks.run_scheduled_scan",
@@ -82,14 +92,35 @@ celery_app.conf.beat_schedule = {
 logger = logging.getLogger(__name__)
 
 
+def scan_hours(frequency_hours):
+    """The local hours a user on this interval is scanned at.
+
+    Counted out from SCAN_ANCHOR_HOUR, which is why every offered interval divides
+    24: 4 hours gives six evenly spaced slots a day, 5 would give five and a gap.
+    """
+    step = max(1, frequency_hours)
+    return tuple(sorted((SCAN_ANCHOR_HOUR + n * step) % 24
+                        for n in range(max(1, 24 // step))))
+
+
+def _clock(hour):
+    """An hour as a person writes it: 9 -> '9am', 21 -> '9pm'."""
+    return f"{hour % 12 or 12}{'am' if hour < 12 else 'pm'}"
+
+
 def auto_scan_time_label(frequency_hours=None):
-    """Human-readable description of how often the scheduled scan runs."""
+    """Human-readable description of when the scheduled scan runs."""
     hours = frequency_hours or DEFAULT_SCAN_FREQUENCY_HOURS
     if hours == 1:
         return "every hour"
-    if hours == 24:
-        return "once a day"
-    return f"every {hours} hours"
+
+    zone = datetime.now(_scan_zone()).strftime("%Z")
+    slots = scan_hours(hours)
+    if len(slots) == 1:
+        return f"once a day, at {_clock(slots[0])} {zone}".strip()
+    if len(slots) == 2:
+        return f"at {_clock(slots[0])} and {_clock(slots[1])} {zone}".strip()
+    return f"every {hours} hours, from {_clock(SCAN_ANCHOR_HOUR)} {zone}".strip()
 
 
 def _try_acquire_lock(name, token, ttl):
@@ -524,6 +555,10 @@ def user_is_due(user_email, now=None):
     The cron job fires hourly and asks this of everyone, so a user on a 24 hour
     interval is simply skipped 23 times out of 24 — unless they have asked for a
     scan explicitly, which overrides the interval.
+
+    Which 23 it skips matters, though, and elapsed time alone would hand that
+    choice to whenever the user last happened to be scanned. The interval is
+    measured out from SCAN_ANCHOR_HOUR instead; see _scheduled_scan_is_due.
     """
     if has_pending_request(user_email):
         return True
@@ -539,9 +574,40 @@ def user_is_due(user_email, now=None):
     if previous.tzinfo is not None:
         previous = previous.replace(tzinfo=None)
 
-    # A little grace, or an hourly job whose runs drift by seconds would push a
-    # 1 hour interval out to 2 hours.
-    return previous + timedelta(hours=hours) - timedelta(minutes=5) <= now
+    return _scheduled_scan_is_due(previous, now, hours)
+
+
+def _scan_zone():
+    try:
+        return ZoneInfo(SCAN_TZ)
+    except Exception:
+        logger.warning("Unknown AUTO_SCAN_TZ %r; reading the schedule in UTC.", SCAN_TZ)
+        return timezone.utc
+
+
+def _scheduled_scan_is_due(previous, now, hours):
+    """Whether this interval's slot has come round, given naive-UTC times.
+
+    "Has the interval elapsed" is the wrong question: someone who pressed "Run
+    scan now" at 4pm would have their next daily scan fall due at 4pm the day
+    after, and stay there — which is the drift this exists to remove. The question
+    is whether the slot this hour belongs to has been scanned yet.
+
+    Reading the local hour on each tick is also what carries this through a
+    daylight saving change: the hourly cron has a tick at 9am either way, so there
+    is no offset to keep in step.
+    """
+    local_now = now.replace(tzinfo=timezone.utc).astimezone(_scan_zone())
+
+    if local_now.hour in scan_hours(hours):
+        slot = local_now.replace(minute=0, second=0, microsecond=0)
+        if previous < slot.astimezone(timezone.utc).replace(tzinfo=None):
+            return True
+
+    # A missed slot — a failed run, a deploy, an outage — should cost an hour or
+    # two rather than a whole interval. Catching up here does not move the next
+    # slot: those are anchored to the clock, not to the last scan.
+    return previous + timedelta(hours=hours + 1) <= now
 
 
 @celery_app.task(name="tasks.run_scheduled_scan")

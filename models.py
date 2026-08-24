@@ -44,7 +44,8 @@ class UserPreference(Base):
     buffer_after = Column(Integer, default=10)
     auto_booking_enabled = Column(Boolean, default=False)
     # How often the scheduled scan should run for this user. The cron job fires
-    # hourly and skips whoever is not due yet, so this is per-person.
+    # hourly and skips whoever is not due yet, so this is per-person. The interval
+    # is counted out from a fixed hour, so every offered value divides 24.
     scan_frequency_hours = Column(Integer, default=24)
     window_past_days = Column(Integer, default=14)
     window_future_days = Column(Integer, default=90)

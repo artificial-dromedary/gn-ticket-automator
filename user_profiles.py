@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 from cryptography.fernet import Fernet
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 
 from db import SessionLocal, Base, engine, ensure_column
 from models import User, UserCredential, UserPreference
@@ -16,8 +17,35 @@ ensure_column("user_preferences", "scan_frequency_hours", "INTEGER", "24")
 
 # How often a user's scheduled scan runs. The cron job fires hourly and skips
 # anyone not yet due, so anything coarser than hourly is a per-user choice.
-SCAN_FREQUENCY_CHOICES = (1, 5, 12, 24)
+#
+# Every choice divides 24, because the interval is counted out from a fixed hour
+# rather than from the last scan — see SCAN_ANCHOR_HOUR in tasks.py. 4 hours gives
+# six evenly spaced slots a day; 5, which this offered until the schedule was
+# anchored, gave four and then a nine hour gap over the anchor.
+SCAN_FREQUENCY_CHOICES = (1, 4, 12, 24)
 DEFAULT_SCAN_FREQUENCY_HOURS = 24
+
+# Intervals that used to be offered, and what replaced them. Anyone still stored
+# on one is moved on import: leaving them there would render the dashboard's
+# dropdown with nothing selected, and the next save would silently pick for them.
+RETIRED_SCAN_FREQUENCIES = {5: 4}
+
+
+def _retire_removed_scan_frequencies():
+    """Move stored intervals that are no longer offered. A no-op once none are."""
+    from models import UserPreference
+
+    with SessionLocal() as db:
+        for retired, replacement in RETIRED_SCAN_FREQUENCIES.items():
+            db.execute(
+                sa_update(UserPreference)
+                .where(UserPreference.scan_frequency_hours == retired)
+                .values(scan_frequency_hours=replacement)
+            )
+        db.commit()
+
+
+_retire_removed_scan_frequencies()
 
 
 def normalize_scan_frequency(value):
