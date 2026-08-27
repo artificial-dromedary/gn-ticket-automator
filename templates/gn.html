@@ -622,6 +622,16 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div style="margin-top: 10px;">
         <label>
+          Email booking notices to:
+          <input type="email" name="notification_email" value="{{ notification_email }}"
+                 placeholder="{{ account_email }}" style="width: 260px;">
+        </label>
+        <span style="color: #555; font-size: 0.9em;">
+          Leave blank to use {{ account_email }}.
+        </span>
+      </div>
+      <div style="margin-top: 10px;">
+        <label>
           Ticket history, past days:
           <input type="number" name="window_past_days" value="{{ window_past_days }}" style="width: 70px;">
         </label>

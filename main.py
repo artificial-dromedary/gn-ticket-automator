@@ -183,7 +183,8 @@ def notify_booking_finished(user_email, successful, failed, conflicts=None):
     mail relay was down, and the outcome is on the progress page regardless.
     """
     try:
-        send_booking_summary_email(user_email, successful, failed,
+        send_booking_summary_email(user_manager.notification_email(user_email),
+                                   successful, failed,
                                    conflict_sessions=conflicts, manual=True)
     except Exception as exc:
         logging.error("Could not send booking summary to %s: %s", user_email, exc)
@@ -416,6 +417,7 @@ def gn_ticket_page():
         window_future_days = prefs.get('window_future_days', 90)
         auto_booking_enabled = prefs.get('auto_booking_enabled', False)
         scan_frequency_hours = prefs.get('scan_frequency_hours', 24)
+        notification_email = prefs.get('notification_email', '')
 
         # The look-ahead slider narrows the visible sessions in the browser without a
         # round trip. Widening it needs sessions this page never loaded, so the slider
@@ -510,6 +512,8 @@ def gn_ticket_page():
             auto_booking_enabled=auto_booking_enabled,
             scan_frequency_hours=scan_frequency_hours,
             scan_frequency_choices=SCAN_FREQUENCY_CHOICES,
+            notification_email=notification_email,
+            account_email=user['email'],
             manual_booking_enabled=MANUAL_BOOKING_ENABLED,
             scan_notice=session.pop('scan_notice', None),
             auto_scan_time=auto_scan_time_label(scan_frequency_hours),
@@ -821,6 +825,7 @@ def update_preferences():
         "window_past_days": int(request.form.get("window_past_days", 14) or 0),
         "auto_booking_enabled": request.form.get("auto_booking_enabled") == "yes",
         "scan_frequency_hours": normalize_scan_frequency(request.form.get("scan_frequency_hours")),
+        "notification_email": request.form.get("notification_email"),
     }
     # The look-ahead lives on the slider, not in this form. Only write it when it was
     # actually submitted, or saving settings would snap the slider back to the default.
