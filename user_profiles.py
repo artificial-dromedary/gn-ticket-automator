@@ -13,6 +13,7 @@ from models import User, UserCredential, UserPreference
 Base.metadata.create_all(bind=engine)
 # Added after user_preferences shipped, so it needs more than create_all.
 ensure_column("user_preferences", "scan_frequency_hours", "INTEGER", "24")
+ensure_column("user_preferences", "notification_email", "VARCHAR(255)")
 
 
 # How often a user's scheduled scan runs. The cron job fires hourly and skips
@@ -46,6 +47,28 @@ def _retire_removed_scan_frequencies():
 
 
 _retire_removed_scan_frequencies()
+
+
+def normalize_notification_email(value):
+    """Coerce a submitted notification address into one to store, or None.
+
+    None means "use the account address", which is both the default and where an
+    unusable entry lands. Falling back rather than rejecting is deliberate: the
+    worst outcome here is mail going quietly nowhere, and an address that never
+    took shows as an empty field the next time the page loads.
+    """
+    if value is None:
+        return None
+    address = str(value).strip().lower()
+    if not address:
+        return None
+
+    local, separator, domain = address.rpartition("@")
+    if not separator or not local or "." not in domain:
+        return None
+    if any(character.isspace() for character in address):
+        return None
+    return address
 
 
 def normalize_scan_frequency(value):
@@ -176,6 +199,8 @@ class UserProfileManager:
         if "window_future_days" in prefs:
             # Not the `or` fallback used above: "Today" is 0, which is falsy but real.
             preferences.window_future_days = normalize_lookahead(prefs.get("window_future_days"))
+        if "notification_email" in prefs:
+            preferences.notification_email = normalize_notification_email(prefs.get("notification_email"))
         preferences.updated_at = datetime.utcnow()
 
     def load_profile(self, email):
@@ -202,6 +227,7 @@ class UserProfileManager:
                     "window_past_days": prefs.window_past_days if prefs else 14,
                     "window_future_days": normalize_lookahead(
                         prefs.window_future_days if prefs else DEFAULT_LOOKAHEAD_DAYS),
+                    "notification_email": (prefs.notification_email if prefs else None) or "",
                 }
             }
 
@@ -220,6 +246,7 @@ class UserProfileManager:
                     "scan_frequency_hours": DEFAULT_SCAN_FREQUENCY_HOURS,
                     "window_past_days": 14,
                     "window_future_days": DEFAULT_LOOKAHEAD_DAYS,
+                    "notification_email": "",
                 }
             return {
                 "buffer_before": prefs.buffer_before,
@@ -228,6 +255,7 @@ class UserProfileManager:
                 "scan_frequency_hours": prefs.scan_frequency_hours or DEFAULT_SCAN_FREQUENCY_HOURS,
                 "window_past_days": prefs.window_past_days,
                 "window_future_days": normalize_lookahead(prefs.window_future_days),
+                "notification_email": prefs.notification_email or "",
             }
 
     def update_preferences(self, email, prefs):
@@ -245,6 +273,25 @@ class UserProfileManager:
             return False
         required_fields = ["airtable_api_key", "servicenow_password", "totp_secret"]
         return all(profile.get(field) for field in required_fields)
+
+    def notification_email(self, email):
+        """Where this user's mail goes: their chosen address, or the account one.
+
+        Every send resolves the recipient through here rather than using the
+        account address directly, so the identity a scan runs under and the
+        mailbox it reports to stay separate questions.
+        """
+        account = email.strip().lower()
+        with SessionLocal() as db:
+            user = db.execute(select(User).where(User.email == account)).scalar_one_or_none()
+            if not user:
+                return account
+            prefs = db.execute(
+                select(UserPreference).where(UserPreference.user_id == user.id)
+            ).scalar_one_or_none()
+            if not prefs:
+                return account
+            return normalize_notification_email(prefs.notification_email) or account
 
     def list_auto_enabled_users(self):
         """Emails of users who opted in to automated booking."""

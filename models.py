@@ -49,6 +49,10 @@ class UserPreference(Base):
     scan_frequency_hours = Column(Integer, default=24)
     window_past_days = Column(Integer, default=14)
     window_future_days = Column(Integer, default=90)
+    # Where booking summaries, conflict notices and the daily digest are sent.
+    # Empty means the account address: sign-in is tied to one organisation, and
+    # the mail does not have to follow it there.
+    notification_email = Column(String(255))
     updated_at = Column(DateTime, default=utcnow)
 
     user = relationship("User", back_populates="preferences")

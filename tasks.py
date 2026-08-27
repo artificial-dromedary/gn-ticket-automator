@@ -344,7 +344,7 @@ def _email_new_conflicts(user_email, conflict_payload):
                     len(conflict_payload), user_email)
         return []
 
-    send_conflict_email(user_email, unreported)
+    send_conflict_email(user_manager.notification_email(user_email), unreported)
 
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
@@ -692,7 +692,7 @@ def _scan_user(user_email):
     elif manual:
         # Nothing to book, but the button promised an email either way.
         try:
-            send_booking_summary_email(user_email, [], [],
+            send_booking_summary_email(user_manager.notification_email(user_email), [], [],
                                        conflict_sessions=conflict_payload, manual=True)
         except Exception as exc:
             logger.error("Could not send booking summary to %s: %s", user_email, exc)
@@ -747,7 +747,8 @@ def _book_sessions(user_email, session_ids, manual=False):
         if not manual:
             return
         try:
-            send_booking_summary_email(user_email, successful or [], failed or [],
+            send_booking_summary_email(user_manager.notification_email(user_email),
+                                       successful or [], failed or [],
                                        conflict_sessions=conflicted, manual=True)
         except Exception as exc:
             logger.error("Could not send booking summary to %s: %s", user_email, exc)
@@ -932,7 +933,9 @@ def send_daily_summaries(force=False):
             continue
         try:
             send_daily_summary_email(
-                email,
+                # The recipient is the only thing that follows the preference:
+                # everything else here is keyed by the account address.
+                user_manager.notification_email(email),
                 sessions_booked_on(email, now_local.date()),
                 outstanding_conflicts(email),
                 summary_date,
