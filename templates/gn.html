@@ -255,6 +255,25 @@ body {
 .conflict-email-btn:hover {
   background: #b52b27;
 }
+.conflict-draft {
+  margin: -2px 0 8px;
+  font-size: 13px;
+}
+.conflict-draft summary {
+  cursor: pointer;
+  color: #a94442;
+}
+.conflict-draft textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 220px;
+  margin-top: 6px;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.conflict-draft button {
+  margin-top: 4px;
+}
 .conflict-emailed-badge {
   display: inline-flex;
   align-items: center;
@@ -451,58 +470,27 @@ document.addEventListener('DOMContentLoaded', function () {
   applyFilter(loadedDays);
 });
 
-function formatTimeInTz(isoString, timezone) {
-  if (!isoString) return 'Unknown time';
-  const date = new Date(isoString);
-  if (isNaN(date.getTime())) return isoString;
-  const options = {
-    weekday: 'long', month: 'long', day: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short'
+function copyConflictDraft(btn) {
+  const text = btn.closest('.conflict-draft').querySelector('textarea');
+  const done = function() {
+    btn.textContent = 'Copied';
+    setTimeout(function() { btn.textContent = 'Copy text'; }, 1500);
   };
-  if (timezone) {
-    try { options.timeZone = timezone; } catch(e) {}
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text.value).then(done, function() {
+      text.select(); document.execCommand('copy'); done();
+    });
+  } else {
+    text.select(); document.execCommand('copy'); done();
   }
-  return new Intl.DateTimeFormat('en-US', options).format(date);
 }
 
 function openConflictEmail(btn) {
   const d = btn.dataset;
-  const baseId = 'appP1kThwW9zVEpHr';
-  const tz = d.timezone || '';
-
-  const t1 = d.teacher || 'Teacher';
-  const t1Email = d.teacherEmail || '';
-  const s1Id = d.sessionId || '';
-  const s1Title = d.sessionTitle || 'Session';
-  const s1Time = formatTimeInTz(d.sessionTime, tz);
-  const s1Created = d.sessionCreated || '';
-
-  const t2 = d.otherTeacher || 'Other Teacher';
-  const t2Email = d.otherTeacherEmail || '';
-  const s2Id = d.otherSessionId || '';
-  const s2Title = d.otherSessionTitle || 'Other Session';
-  const s2Time = formatTimeInTz(d.otherSessionTime, tz);
-  const s2Created = d.otherSessionCreated || '';
-
-  // t1 = candidate session being submitted (non-priority)
-  // t2 = existing Airtable conflict session (priority — already booked)
-  const priorityFirstName = t2.split(' ')[0] || t2;
-  const nonPriorityFirstName = t1.split(' ')[0] || t1;
-
-  const tableId = 'tblRqP4N6gdA8WZEd';
-  const viewId  = 'viwaticgz8bjJcUif';
-  const link1 = `https://airtable.com/${baseId}/${tableId}/${viewId}/${s1Id}?blocks=hide`;
-  const link2 = `https://airtable.com/${baseId}/${tableId}/${viewId}/${s2Id}?blocks=hide`;
-
-  const to = [t1Email, t2Email].filter(Boolean).join(',');
+  const to = [d.teacherEmail, d.otherTeacherEmail].filter(Boolean).join(',');
   const subject = `Time conflict: overlapping sessions`;
-  const body =
-    `Hi there,\n\nIn setting up the videoconference connection, I saw that there are two sessions overlapping for your school:\n\n` +
-    `• ${s1Title} (${t1}): ${s1Time}\n  Airtable: ${link1}\n\n` +
-    `• ${s2Title} (${t2}): ${s2Time}\n  Airtable: ${link2}\n\n` +
-    `There are two options: one is for ${nonPriorityFirstName} to connect from the classroom via Zoom (rather than the Cisco machine), which can work if your internet is generally pretty reliable. ` +
-    `Option two is to rebook one of the sessions. ${priorityFirstName}'s session was booked first, so that one is given priority.\n\n` +
-    `Could you let me know what you'd like to do?`;
+  const draft = document.getElementById('conflict-draft-' + d.sessionId);
+  const body = draft ? draft.value : '';
 
   const gmailUrl = `https://mail.google.com/mail/?view=cm` +
     `&to=${encodeURIComponent(to)}` +
@@ -745,23 +733,22 @@ document.addEventListener('DOMContentLoaded', function() {
               <span class="conflict-emailed-badge" id="emailed-badge-{{ session.s_id }}">📬 Email sent — awaiting teacher response</span>
               {% else %}
               <button type="button" class="conflict-email-btn" id="email-btn-{{ session.s_id }}"
-                data-teacher="{{ session.teacher | e }}"
                 data-teacher-email="{{ session.teacher_email | default('') | e }}"
                 data-session-id="{{ session.s_id }}"
-                data-session-title="{{ session.title | e }}"
-                data-session-time="{{ session.start_time.isoformat() if session.start_time else '' }}"
-                data-session-created="{{ session.created_at | default('') }}"
-                data-other-teacher="{{ session.conflict_other_teacher | default('') | e }}"
                 data-other-teacher-email="{{ session.conflict_other_teacher_email | default('') | e }}"
                 data-other-session-id="{{ session.conflict_other_id | default('') }}"
-                data-other-session-title="{{ session.conflict_other_title | default('') | e }}"
-                data-other-session-time="{{ session.conflict_other_start_iso | default('') }}"
-                data-other-session-created="{{ session.conflict_other_created_at | default('') }}"
-                data-timezone="{{ session.timezone | default('') | e }}"
                 onclick="openConflictEmail(this)">📧 Email teachers</button>
               {% endif %}
             {% endif %}
           </div>
+          {% set school_email = teacher_conflict_email(session) %}
+          {% if school_email %}
+          <details class="conflict-draft">
+            <summary>Email text for the school</summary>
+            <textarea readonly id="conflict-draft-{{ session.s_id }}">{{ school_email }}</textarea>
+            <button type="button" onclick="copyConflictDraft(this)">Copy text</button>
+          </details>
+          {% endif %}
           {% elif session.conflict_type == 'last_minute' %}
           <div class="conflict-banner conflict-last-minute">⏰ Last minute: {{ session.conflict_details }}</div>
           {% elif session.conflict_type == 'gn_ticket' %}
