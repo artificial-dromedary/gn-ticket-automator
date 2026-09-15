@@ -73,6 +73,13 @@ envVarGroups:
         sync: false
       - key: CHATGPT_API_KEY
         sync: false
+      # The key the retired desktop app encrypted with (APP_ENCRYPTION_KEY from its
+      # bundled .env), so people moving off it can upload their gn_ticket.db instead
+      # of redoing setup. Different from APP_ENCRYPTION_KEY, which Render generated
+      # for this service and which cannot open anything written on a Mac. List every
+      # key the handed-out builds used, comma-separated, if there was more than one.
+      - key: DESKTOP_APP_ENCRYPTION_KEY
+        sync: false
       # Optional. Overridable so a model retirement is a dashboard edit, not a deploy.
       - key: CHATGPT_MODEL
         value: gpt-5-mini

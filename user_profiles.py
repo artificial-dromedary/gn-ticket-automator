@@ -119,7 +119,12 @@ def _get_fernet():
     key = os.getenv("APP_ENCRYPTION_KEY", "").strip()
     if not key:
         raise RuntimeError("APP_ENCRYPTION_KEY is required for server-side encryption.")
+    return fernet_for(key)
 
+
+def fernet_for(key):
+    """Build a Fernet from a configured key, as this app has always accepted them."""
+    key = key.strip()
     # Accept raw 32-byte key or urlsafe base64-encoded key
     try:
         if len(key) == 32:
