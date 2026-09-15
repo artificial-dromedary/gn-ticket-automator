@@ -31,7 +31,6 @@ pytz>=2023.3
 
 # Cryptography for secure credential storage
 cryptography>=42.0.0
-keyring>=24.3.0
 
 # TOTP (Two-Factor Authentication)
 pyotp>=2.9.0
