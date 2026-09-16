@@ -42,6 +42,9 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
         candidate.conflict_other_teacher_email = None
         candidate.conflict_other_start_iso = None
         candidate.conflict_other_created_at = None
+        # True when the other session already has a GN ticket, so it holds the Cisco
+        # machine no matter which of the two was created first.
+        candidate.conflict_other_ticketed = False
 
         candidate_start = candidate.start_time
         candidate_end = (candidate_start + timedelta(minutes=candidate.length or 0)
@@ -92,6 +95,7 @@ def check_for_time_conflicts(candidate_sessions, existing_sessions, historical_t
                     candidate.conflict_other_teacher_email = getattr(existing, 'teacher_email', '')
                     candidate.conflict_other_start_iso = existing_start.isoformat()
                     candidate.conflict_other_created_at = getattr(existing, 'created_at', '')
+                    candidate.conflict_other_ticketed = True
                     break
 
         if candidate.is_conflict:

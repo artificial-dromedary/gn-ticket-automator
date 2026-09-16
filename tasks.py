@@ -290,6 +290,7 @@ def _session_to_dict(session):
         "title": session.title,
         "school": session.school,
         "teacher": session.teacher,
+        "teacher_email": getattr(session, "teacher_email", ""),
         "start_time": session.start_time.isoformat() if session.start_time else None,
         "length": session.length,
         "conflict_details": session.conflict_details,
@@ -297,6 +298,15 @@ def _session_to_dict(session):
         "conflict_session_id": getattr(session, "conflict_other_id", None),
         "conflict_start_iso": session.conflict_start_iso,
         "conflict_end_iso": session.conflict_end_iso,
+        # Enough about both sides of a clash to write the email to the school.
+        "timezone": getattr(session, "timezone", ""),
+        "created_at": getattr(session, "created_at", ""),
+        "conflict_other_title": getattr(session, "conflict_other_title", None),
+        "conflict_other_teacher": getattr(session, "conflict_other_teacher", None),
+        "conflict_other_teacher_email": getattr(session, "conflict_other_teacher_email", None),
+        "conflict_other_start_iso": getattr(session, "conflict_other_start_iso", None),
+        "conflict_other_created_at": getattr(session, "conflict_other_created_at", None),
+        "conflict_other_ticketed": getattr(session, "conflict_other_ticketed", False),
     }
 
 
