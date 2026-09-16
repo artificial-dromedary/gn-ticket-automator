@@ -8,6 +8,11 @@ key, and save them here under ours, along with their preferences and history.
 
 Only the row matching the uploader's own sign-in is ever read, so a file with
 someone else's profile in it imports nothing.
+
+People doing this are not looking for a database file by name, so the page takes
+the whole GN_Ticket_Automator folder dragged in. Anything in it that is not the
+database is ignored, except the app's own .env: the key it carries opens that
+person's file even if their build used a different one from the configured key.
 """
 import os
 import sqlite3
@@ -30,6 +35,10 @@ DESKTOP_KEY_ENV = "DESKTOP_APP_ENCRYPTION_KEY"
 # A desktop database is around 100 KB; anything near this is not one.
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
+# The folder holds logs, templates and a session store, so a drop of the whole thing
+# is many small files. Enough room for that, and a stop before an unrelated folder.
+MAX_UPLOAD_FILES = 400
+
 SQLITE_HEADER = b"SQLite format 3\x00"
 
 
@@ -37,8 +46,11 @@ class DesktopImportError(Exception):
     """Something the person can act on, worded for them."""
 
 
-def _desktop_fernets():
+def _desktop_fernets(extra_keys=()):
     keys = os.getenv(DESKTOP_KEY_ENV, "").split(",")
+    # A key from the person's own copy of the app, which opens their own file when
+    # the configured one does not — an install older than the key on the server.
+    keys.extend(extra_keys)
     # Last resort: a build that happened to ship this service's key.
     keys.append(os.getenv("APP_ENCRYPTION_KEY", ""))
     fernets = []
@@ -49,6 +61,18 @@ def _desktop_fernets():
             except RuntimeError:
                 continue
     return fernets
+
+
+def key_from_env_text(text):
+    """The desktop key out of an uploaded .env, or None. Never logged or stored."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("APP_ENCRYPTION_KEY"):
+            _, _, value = line.partition("=")
+            value = value.strip().strip("'").strip('"')
+            if value:
+                return value
+    return None
 
 
 def _decrypt(fernets, token):
@@ -90,7 +114,16 @@ def _open(path):
     return conn
 
 
-def read_desktop_profile(path, email):
+def is_desktop_database(path):
+    """True if this file is SQLite at all — the cheap test before opening one."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(len(SQLITE_HEADER)) == SQLITE_HEADER
+    except OSError:
+        return False
+
+
+def read_desktop_profile(path, email, extra_keys=()):
     """Everything worth keeping for `email` from a desktop database, decrypted."""
     email = email.strip().lower()
     conn = _open(path)
@@ -112,7 +145,7 @@ def read_desktop_profile(path, email):
                 "here with the same account you used in the desktop app."
             )
 
-        fernets = _desktop_fernets()
+        fernets = _desktop_fernets(extra_keys)
         profile = {
             "airtable_api_key": _decrypt(fernets, creds["airtable_api_key_enc"]),
             "servicenow_password": _decrypt(fernets, creds["servicenow_password_enc"]),
@@ -156,7 +189,41 @@ def read_desktop_profile(path, email):
         conn.close()
 
 
-def import_desktop_profile(path, email, name=None, replace=False):
+def import_desktop_files(paths, email, name=None, replace=False):
+    """Import from whatever was dropped in: the database file, or the whole folder.
+
+    The database is found by its contents rather than its name, and any .env among
+    the files is read only for the key that unlocks that person's own credentials.
+    """
+    databases = [p for p in paths if is_desktop_database(p)]
+    keys = []
+    for path in paths:
+        if path in databases:
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                key = key_from_env_text(handle.read(64 * 1024))
+        except OSError:
+            continue
+        if key:
+            keys.append(key)
+
+    if not databases:
+        raise DesktopImportError(
+            "No desktop app settings were in what you sent. Drag in the whole "
+            "GN_Ticket_Automator folder from your home folder and try again."
+        )
+
+    last_error = None
+    for path in databases:
+        try:
+            return import_desktop_profile(path, email, name=name, replace=replace, extra_keys=keys)
+        except DesktopImportError as exc:
+            last_error = exc
+    raise last_error
+
+
+def import_desktop_profile(path, email, name=None, replace=False, extra_keys=()):
     """Save a desktop profile under this service's key. Returns what was brought across.
 
     Automatic booking is always left off. Someone still running the desktop app
@@ -164,7 +231,7 @@ def import_desktop_profile(path, email, name=None, replace=False):
     have stopped using it.
     """
     email = email.strip().lower()
-    profile, submissions, emailed = read_desktop_profile(path, email)
+    profile, submissions, emailed = read_desktop_profile(path, email, extra_keys)
 
     if user_manager.is_profile_complete(email) and not replace:
         raise DesktopImportError(

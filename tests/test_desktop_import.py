@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 import main
 from db import SessionLocal
-from desktop_import import DesktopImportError, import_desktop_profile
+from desktop_import import DesktopImportError, import_desktop_files, import_desktop_profile
 from models import ConflictEmailLog, TicketSubmission, User
 from user_profiles import user_manager
 
@@ -163,6 +163,38 @@ def test_a_file_that_is_not_a_database_is_turned_away(tmp_path):
         import_desktop_profile(str(path), EMAIL)
 
 
+def test_the_whole_folder_can_be_sent_and_the_database_found_in_it(tmp_path, desktop_db):
+    """Nobody has to know which file matters: the folder is dropped in as it is."""
+    junk = [tmp_path / "app.log", tmp_path / "error.log", tmp_path / "templates.html"]
+    for path in junk:
+        path.write_text("nothing useful in here")
+
+    result = import_desktop_files([str(p) for p in junk] + [desktop_db], EMAIL)
+
+    assert result["submissions"] == 1
+    assert user_manager.is_profile_complete(EMAIL)
+
+
+def test_the_key_in_the_folders_own_env_opens_a_file_the_server_key_cannot(tmp_path, monkeypatch):
+    """An install older than the key on the server still imports: its .env came too."""
+    their_key = Fernet.generate_key().decode()
+    monkeypatch.setenv("DESKTOP_APP_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    database = make_desktop_db(str(tmp_path / "gn_ticket.db"), key=their_key)
+    env = tmp_path / ".env"
+    env.write_text(f"GOOGLE_CLIENT_ID=123.apps.googleusercontent.com\nAPP_ENCRYPTION_KEY={their_key}\n")
+
+    import_desktop_files([str(env), database], EMAIL)
+
+    assert user_manager.load_profile(EMAIL)["totp_secret"] == "JBSWY3DPEHPK3PXP"
+
+
+def test_sending_a_folder_with_no_settings_in_it_says_what_to_do(tmp_path):
+    (tmp_path / "holiday.jpg").write_bytes(b"\xff\xd8\xff nothing here")
+
+    with pytest.raises(DesktopImportError, match="whole GN_Ticket_Automator folder"):
+        import_desktop_files([str(tmp_path / "holiday.jpg")], EMAIL)
+
+
 @pytest.fixture
 def client():
     user_manager.upsert_user(EMAIL, "Lead")
@@ -174,20 +206,30 @@ def client():
     return test_client
 
 
-def test_uploading_through_the_page(client, desktop_db):
+def test_dropping_the_folder_on_the_page(client, desktop_db, tmp_path):
     with open(desktop_db, "rb") as handle:
-        response = client.post("/import-desktop", data={"desktop_db": (io.BytesIO(handle.read()), "gn_ticket.db")},
-                               content_type="multipart/form-data")
+        database = handle.read()
+    response = client.post("/import-desktop", content_type="multipart/form-data", data={"desktop_files": [
+        (io.BytesIO(b"log line"), "app.log"),
+        (io.BytesIO(database), "gn_ticket.db"),
+    ]})
+
     assert response.status_code == 200
-    assert b"Your settings are in" in response.data
-    assert b"Automatic booking is off" in response.data
+    assert b"Your settings are here" in response.data
+    assert b"automatic booking is switched off" in response.data
     assert user_manager.is_profile_complete(EMAIL)
 
 
-def test_the_page_shows_what_went_wrong(client):
-    response = client.post("/import-desktop", data={"desktop_db": (io.BytesIO(b"nope"), "gn_ticket.db")},
-                           content_type="multipart/form-data")
-    assert b"isn&#39;t a desktop app database" in response.data
+def test_the_page_says_what_to_do_when_the_wrong_thing_is_sent(client):
+    response = client.post("/import-desktop", content_type="multipart/form-data",
+                           data={"desktop_files": [(io.BytesIO(b"nope"), "notes.txt")]})
+    assert b"whole GN_Ticket_Automator folder" in response.data
+
+
+def test_the_page_explains_where_to_find_the_folder(client):
+    response = client.get("/import-desktop")
+    assert b"GN_Ticket_Automator" in response.data
+    assert b"Home" in response.data
 
 
 def test_new_users_are_pointed_at_the_import(client):

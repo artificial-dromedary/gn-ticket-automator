@@ -100,7 +100,8 @@ from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
 import gn_ticket
 from user_profiles import user_manager
-from desktop_import import MAX_UPLOAD_BYTES, DesktopImportError, import_desktop_profile
+from desktop_import import (MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, DesktopImportError,
+                            import_desktop_files)
 from airtable_integration import create_airtable_client
 from updater import AppUpdater, APP_VERSION
 from ticket_submission_log import TicketSubmissionLog
@@ -825,36 +826,39 @@ def import_desktop():
     if request.method == 'GET':
         return render_template("import_desktop.html", user=user, has_profile=has_profile)
 
-    upload = request.files.get('desktop_db')
-    if not upload or not upload.filename:
+    # A folder drop arrives as many files; the import picks out the database itself,
+    # so nobody has to know which one it is.
+    uploads = [f for f in request.files.getlist('desktop_files') if f and f.filename]
+    if not uploads:
         return render_template("import_desktop.html", user=user, has_profile=has_profile,
-                               error="Choose your gn_ticket.db file first.")
+                               error="Drag in your GN_Ticket_Automator folder first.")
 
-    # Written to a private temp file only for as long as it takes to read, since
-    # SQLite needs a path, then removed whatever happens.
+    import shutil
     import tempfile
-    handle, path = tempfile.mkstemp(suffix=".db")
+    workspace = tempfile.mkdtemp(prefix="desktop_import_")
     try:
-        with os.fdopen(handle, "wb") as out:
-            size = 0
-            for chunk in iter(lambda: upload.stream.read(64 * 1024), b""):
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    raise DesktopImportError("That file is far too big to be a desktop app database.")
-                out.write(chunk)
-        result = import_desktop_profile(path, user['email'], name=user.get('name'),
-                                        replace=request.form.get('replace') == 'yes')
+        paths = []
+        for index, upload in enumerate(uploads[:MAX_UPLOAD_FILES]):
+            path = os.path.join(workspace, str(index))
+            with open(path, "wb") as out:
+                size = 0
+                for chunk in iter(lambda: upload.stream.read(64 * 1024), b""):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        break  # far too big to be anything we want; skip the rest of it
+                    out.write(chunk)
+            paths.append(path)
+
+        result = import_desktop_files(paths, user['email'], name=user.get('name'),
+                                      replace=request.form.get('replace') == 'yes')
     except DesktopImportError as exc:
         return render_template("import_desktop.html", user=user, has_profile=has_profile, error=str(exc))
     except Exception:
         logging.exception("Desktop import failed for %s", user['email'])
         return render_template("import_desktop.html", user=user, has_profile=has_profile,
-                               error="Something went wrong reading that file. Enter your details in the setup steps instead.")
+                               error="Something went wrong reading those files. Enter your details in the setup steps instead.")
     finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        shutil.rmtree(workspace, ignore_errors=True)
 
     logging.info("Imported desktop profile for %s: %s", user['email'], result)
     return render_template("import_desktop.html", user=user, has_profile=True, result=result)
