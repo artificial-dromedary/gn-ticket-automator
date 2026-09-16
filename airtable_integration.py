@@ -35,6 +35,21 @@ class AirtableSession:
                 return field_value[0] if field_value else default
             return field_value or default
 
+        def extract_all(field_value):
+            """Every value of a lookup, not just the first.
+
+            A session can be booked by more than one teacher, and the email to the
+            school has to name all of them. Fields that feed the GN ticket form keep
+            using extract_text, which stays on one value.
+            """
+            if isinstance(field_value, list):
+                values = field_value
+            elif field_value:
+                values = [field_value]
+            else:
+                values = []
+            return [str(value).strip() for value in values if str(value).strip()]
+
         # DEBUG: Check all title-related fields
         title_fields = ['Session Title', 'Session Title Text', 'Session Title Raw',
                         'Subject/Curriculum', 'Primary Subject Text',
@@ -71,6 +86,9 @@ class AirtableSession:
         # Teacher - try both Teacher Name and Teacher
         teacher_raw = fields.get('Teacher Name') or fields.get('Teacher', '')
         self.teacher = extract_text(teacher_raw, 'Unknown Teacher')
+        # Every teacher on the session. self.teacher stays the first one because the
+        # GN ticket form takes a single client name.
+        self.teachers = extract_all(teacher_raw)
 
         # Community
         community_raw = fields.get('School Community', '')
@@ -140,6 +158,7 @@ class AirtableSession:
 
         # Teacher email
         self.teacher_email = extract_text(fields.get('Teacher Email', ''), '')
+        self.teacher_emails = extract_all(fields.get('Teacher Email', ''))
 
         # School timezone (IANA string e.g. 'America/Iqaluit')
         self.timezone = extract_text(fields.get('School Timezone', ''), '')

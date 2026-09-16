@@ -41,12 +41,28 @@ def test_the_draft_matches_the_wording_sent_to_schools():
         "overlapping for your school:\n\n"
         "• Beam Paints Watercolour - Fish (Frederick Addae): Thursday, June 4 at 10:00 AM EDT\n\n"
         "• Blueberry Beading (Nicole King): Thursday, June 4 at 10:30 AM EDT\n\n"
-        "If your internet is pretty reliable/fast, one teacher can connect from the classroom "
+        "If your internet is pretty reliable/fast, Nicole can connect from the classroom "
         "via Zoom (rather than the Cisco machine). Otherwise, Frederick's session will "
         "connect on the Cisco machine as it is already set up, and we can rebook Nicole's "
         "session.\n\n"
         "Could you let me know what you'd like to do?"
     )
+
+
+def test_a_session_with_two_teachers_names_them_both():
+    """A booking can have more than one teacher on it, and the school reads all of them."""
+    fish, beads = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
+    beads.teachers = ["Nicole King", "Arlene Vasquez"]
+    beads.teacher_emails = ["nicoleking@example.com", "avasquez@example.com"]
+    check_for_time_conflicts([fish, beads], [], now=_now())
+
+    draft = teacher_conflict_email(beads)
+    assert "• Blueberry Beading (Nicole King and Arlene Vasquez):" in draft
+    assert "Nicole and Arlene can connect from the classroom via Zoom" in draft
+    assert "we can rebook Nicole and Arlene's session" in draft
+
+    # And the same pair read from the other side of the clash.
+    assert "(Nicole King and Arlene Vasquez)" in teacher_conflict_email(fish)
 
 
 def test_the_session_booked_first_keeps_the_cisco_machine_from_either_side():
