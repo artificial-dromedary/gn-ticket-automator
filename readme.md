@@ -119,21 +119,6 @@ python main.py
 
 ---
 
-## 🖥️ Mac App Packaging (Coming Soon)
-
-**For Easy Distribution:**
-```bash
-# Install packaging tools
-pip install pyinstaller
-
-# Create Mac app
-pyinstaller --windowed --onedir main.py
-
-# Distribute the generated .app file
-```
-
----
-
 ## ✨ Features
 
 ### **User Experience:**
