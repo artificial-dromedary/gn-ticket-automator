@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bring your settings from the app - GN Ticket Automator</title>
+<link href="{{ url_for('static', filename='css/simpleGridTemplate.css') }}" rel="stylesheet" type="text/css">
+<style>
+.import-page { max-width: 42rem; margin: 3rem auto; padding: 0 1rem; }
+.import-page h2 { margin-bottom: 0.25rem; }
+.import-page .lead { color: #555; margin-top: 0; }
+.import-message { padding: 12px 16px; border-radius: 4px; margin: 1rem 0; }
+.import-message.error { background: #fcebea; border: 1px solid #d9534f; color: #a94442; }
+.import-message.done { background: #e8f5e9; border: 1px solid #4caf50; color: #256029; }
+.steps { background: #f8f9fa; border-radius: 8px; padding: 1rem 1.25rem 1rem 2.25rem; }
+.steps li { margin-bottom: 0.6rem; }
+.dropzone {
+  border: 2px dashed #9aa5b1; border-radius: 10px; background: #fff;
+  padding: 2rem 1rem; text-align: center; margin: 1rem 0; transition: background 0.15s, border-color 0.15s;
+}
+.dropzone.dragover { border-color: #2c7be5; background: #eef5ff; }
+.dropzone .hint { color: #666; font-size: 14px; margin: 0.5rem 0 0; }
+.dropzone .chosen { color: #256029; font-weight: bold; margin-top: 0.75rem; }
+.pick-btn {
+  display: inline-block; padding: 8px 18px; background: #fff; color: #2c7be5;
+  border: 1px solid #2c7be5; border-radius: 4px; cursor: pointer; font-size: 15px;
+}
+.import-btn {
+  padding: 10px 22px; background: #2c7be5; color: #fff; border: none;
+  border-radius: 4px; cursor: pointer; font-size: 16px;
+}
+.import-btn[disabled] { background: #b6c6da; cursor: default; }
+.quiet { color: #666; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="import-page">
+
+  {% if result %}
+  <h2>Your settings are here</h2>
+  <div class="import-message done">
+    <p>Your Airtable key, ServiceNow password and 2FA code setup came across{% if result.preferences %}, along with your settings{% endif %}. You don't have to enter any of them again.</p>
+    {% if result.submissions or result.conflict_emails %}
+    <p>Your history came too: {{ result.submissions }} booked session{{ '' if result.submissions == 1 else 's' }} and {{ result.conflict_emails }} conflict email{{ '' if result.conflict_emails == 1 else 's' }} you'd already sent, so nobody gets the same email twice.</p>
+    {% endif %}
+    <p><strong>One last step:</strong> automatic booking is switched off for now, so the app on your Mac and this site can't both book the same session. Once you've stopped using the app on your Mac, turn it on in your settings here.</p>
+  </div>
+  <p><a href="/gn_ticket">Go to my sessions</a></p>
+
+  {% else %}
+  <h2>Bring your settings from the app</h2>
+  <p class="lead">Moving over from the GN Ticket Automator app on your Mac? Send us its folder and everything you set up comes with you — no retyping.</p>
+
+  <p>You're signed in as <strong>{{ user.email }}</strong>. This has to be the same address you used in the app.</p>
+
+  {% if error %}
+  <div class="import-message error">{{ error }}</div>
+  {% endif %}
+
+  <ol class="steps">
+    <li>Open <strong>Finder</strong> on the Mac where you used the app.</li>
+    <li>In the menu at the top, click <strong>Go</strong>, then <strong>Home</strong>.</li>
+    <li>Find the folder called <strong>GN_Ticket_Automator</strong>.</li>
+    <li>Drag that folder onto the box below, then click <strong>Bring my settings over</strong>.</li>
+  </ol>
+
+  <form method="POST" action="/import-desktop" enctype="multipart/form-data" id="importForm">
+    <div class="dropzone" id="dropzone">
+      <p><strong>Drag the GN_Ticket_Automator folder here</strong></p>
+      <p class="hint">or</p>
+      <label class="pick-btn" for="folderPicker">Choose the folder</label>
+      <input type="file" id="folderPicker" name="desktop_files" webkitdirectory directory multiple hidden>
+      <input type="file" id="filePicker" name="desktop_files" multiple hidden>
+      <p class="hint">Can't find the folder? <a href="#" id="pickFiles">Choose files instead</a></p>
+      <p class="chosen" id="chosen" hidden></p>
+    </div>
+
+    {% if has_profile %}
+    <p><label><input type="checkbox" name="replace" value="yes"> Replace the settings I already have here</label></p>
+    {% endif %}
+
+    <p><button class="import-btn" type="submit" id="importBtn" disabled>Bring my settings over</button></p>
+  </form>
+
+  <p class="quiet">
+    We only read your own settings out of the folder, and we don't keep the files.
+    Stuck? {% if has_profile %}<a href="/gn_ticket">Go back to your sessions</a>{% else %}<a href="/setup">Type your details in instead</a>{% endif %}.
+  </p>
+
+  <script>
+  (function() {
+    var dropzone = document.getElementById('dropzone');
+    var folderPicker = document.getElementById('folderPicker');
+    var filePicker = document.getElementById('filePicker');
+    var chosen = document.getElementById('chosen');
+    var importBtn = document.getElementById('importBtn');
+    var dropped = null;
+
+    function ready(count, label) {
+      chosen.textContent = '✓ ' + label + ' (' + count + ' file' + (count === 1 ? '' : 's') + ') ready to send';
+      chosen.hidden = false;
+      importBtn.disabled = false;
+    }
+
+    document.getElementById('pickFiles').addEventListener('click', function(event) {
+      event.preventDefault();
+      filePicker.click();
+    });
+    folderPicker.addEventListener('change', function() {
+      if (folderPicker.files.length) { dropped = null; ready(folderPicker.files.length, 'Folder chosen'); }
+    });
+    filePicker.addEventListener('change', function() {
+      if (filePicker.files.length) { dropped = null; folderPicker.value = ''; ready(filePicker.files.length, 'Files chosen'); }
+    });
+
+    ['dragenter', 'dragover'].forEach(function(name) {
+      dropzone.addEventListener(name, function(event) {
+        event.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+    });
+    ['dragleave', 'drop'].forEach(function(name) {
+      dropzone.addEventListener(name, function() { dropzone.classList.remove('dragover'); });
+    });
+
+    // A dropped folder has to be walked to get at the files inside it; they are then
+    // sent by hand, since a file input cannot be filled from a drop.
+    dropzone.addEventListener('drop', function(event) {
+      event.preventDefault();
+      var items = event.dataTransfer.items;
+      var files = [];
+      var pending = 0;
+      var walked = false;
+
+      function done() {
+        if (walked && pending === 0 && files.length) {
+          dropped = files;
+          ready(files.length, 'Folder ready');
+        }
+      }
+
+      function walk(entry) {
+        if (entry.isFile) {
+          pending++;
+          entry.file(function(file) { files.push(file); pending--; done(); }, function() { pending--; done(); });
+        } else if (entry.isDirectory) {
+          pending++;
+          entry.createReader().readEntries(function(entries) {
+            entries.forEach(walk);
+            pending--;
+            done();
+          }, function() { pending--; done(); });
+        }
+      }
+
+      var entries = [];
+      for (var i = 0; i < items.length; i++) {
+        var entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+        if (entry) { entries.push(entry); }
+      }
+      if (entries.length) {
+        entries.forEach(walk);
+        walked = true;
+        done();
+      } else if (event.dataTransfer.files.length) {
+        dropped = Array.prototype.slice.call(event.dataTransfer.files);
+        ready(dropped.length, 'Files ready');
+      }
+    });
+
+    document.getElementById('importForm').addEventListener('submit', function(event) {
+      importBtn.disabled = true;
+      importBtn.textContent = 'Bringing your settings over…';
+      if (!dropped) { return; }
+      event.preventDefault();
+      var data = new FormData();
+      dropped.forEach(function(file) { data.append('desktop_files', file, file.name); });
+      var replace = document.querySelector('input[name=replace]');
+      if (replace && replace.checked) { data.append('replace', 'yes'); }
+      fetch('/import-desktop', { method: 'POST', body: data, credentials: 'same-origin' })
+        .then(function(response) { return response.text(); })
+        .then(function(html) { document.open(); document.write(html); document.close(); })
+        .catch(function() {
+          importBtn.disabled = false;
+          importBtn.textContent = 'Bring my settings over';
+          alert('That did not go through. Please try again.');
+        });
+    });
+  })();
+  </script>
+  {% endif %}
+</div>
+</body>
+</html>
