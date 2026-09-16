@@ -91,6 +91,33 @@ def _field(session, name, default=None):
     return getattr(session, name, default)
 
 
+def _people(session, plural_name, singular_name):
+    """Every name (or address) on a session, however Airtable handed it over.
+
+    A session can be booked by more than one teacher, so the plural field is the
+    real answer; the singular one is kept as a fallback for older scan payloads
+    that only carried the first.
+    """
+    values = _field(session, plural_name) or []
+    if isinstance(values, str):
+        values = [values]
+    values = [str(value).strip() for value in values if str(value).strip()]
+    if values:
+        return values
+    single = _field(session, singular_name)
+    single = str(single).strip() if single else ""
+    return [single] if single else []
+
+
+def _join_names(names, fallback=""):
+    """List people the way a person writes them: 'A', 'A and B', 'A, B and C'."""
+    if not names:
+        return fallback
+    if len(names) == 1:
+        return names[0]
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 def _conflict_pair(session):
     """Both sides of a time clash, in start order, plus which one keeps the machine.
 
@@ -109,17 +136,23 @@ def _conflict_pair(session):
     if isinstance(start, datetime):
         start = start.isoformat()
 
+    this_names = _people(session, "teachers", "teacher")
+    other_names = _people(session, "conflict_other_teachers", "conflict_other_teacher")
+
     this = {
         "title": _field(session, "title") or "Session",
-        "teacher": _field(session, "teacher") or "the teacher",
-        "email": _field(session, "teacher_email") or "",
+        "names": this_names,
+        "teacher": _join_names(this_names, "the teacher"),
+        "email": ", ".join(_people(session, "teacher_emails", "teacher_email")),
         "start": start,
         "created": _field(session, "created_at") or "",
     }
     other = {
         "title": _field(session, "conflict_other_title") or "Session",
-        "teacher": _field(session, "conflict_other_teacher") or "the other teacher",
-        "email": _field(session, "conflict_other_teacher_email") or "",
+        "names": other_names,
+        "teacher": _join_names(other_names, "the other teacher"),
+        "email": ", ".join(_people(session, "conflict_other_teacher_emails",
+                                   "conflict_other_teacher_email")),
         "start": other_start,
         "created": _field(session, "conflict_other_created_at") or "",
     }
@@ -134,6 +167,11 @@ def _conflict_pair(session):
 
 def _first_name(full_name):
     return full_name.split()[0] if full_name.split() else full_name
+
+
+def _first_names(side):
+    """'Zak and Arlene' — everyone on one side of the clash, on first-name terms."""
+    return _join_names([_first_name(name) for name in side["names"]], side["teacher"])
 
 
 def teacher_conflict_email(session):
@@ -152,10 +190,13 @@ def teacher_conflict_email(session):
         "In setting up the videoconference connection, I saw that there are two "
         "sessions overlapping for your school:\n\n"
         f"{bullets}\n\n"
-        "If your internet is pretty reliable/fast, one teacher can connect from the "
-        "classroom via Zoom (rather than the Cisco machine). Otherwise, "
-        f"{_first_name(previous['teacher'])}'s session will connect on the Cisco machine as it is "
-        f"already set up, and we can rebook {_first_name(current['teacher'])}'s session.\n\n"
+        # The session keeping the machine is already set up, so Zoom from the
+        # classroom is only on the table for the other one — name that teacher
+        # rather than leaving the school to work out which of them is meant.
+        f"If your internet is pretty reliable/fast, {_first_names(current)} can connect "
+        "from the classroom via Zoom (rather than the Cisco machine). Otherwise, "
+        f"{_first_names(previous)}'s session will connect on the Cisco machine as it is "
+        f"already set up, and we can rebook {_first_names(current)}'s session.\n\n"
         "Could you let me know what you'd like to do?"
     )
 

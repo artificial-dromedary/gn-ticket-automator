@@ -23,15 +23,19 @@ BASE_TIME = (datetime.now(timezone.utc) + timedelta(days=30)).replace(
 
 class FakeSession:
     def __init__(self, s_id, title, school, start_time, length=60,
-                 status="Booked", teacher="Teacher", gn_ticket_requested=False):
+                 status="Booked", teacher="Teacher", gn_ticket_requested=False,
+                 teachers=None):
         self.s_id = s_id
         self.title = title
         self.school = school
         self.start_time = start_time
         self.length = length
         self.status = status
-        self.teacher = teacher
-        self.teacher_email = f"{teacher.lower().replace(' ', '')}@example.com"
+        self.teachers = list(teachers) if teachers else [teacher]
+        self.teacher = self.teachers[0]
+        self.teacher_emails = [f"{name.lower().replace(' ', '')}@example.com"
+                               for name in self.teachers]
+        self.teacher_email = self.teacher_emails[0]
         self.gn_ticket_requested = gn_ticket_requested
         self.created_at = ""
         self.is_conflict = False
