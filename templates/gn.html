@@ -274,6 +274,42 @@ body {
 .conflict-draft button {
   margin-top: 4px;
 }
+.conflict-resolve-btn {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 4px 10px;
+  background: #3c763d;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.conflict-resolve-btn:hover {
+  background: #2d5a2e;
+}
+.conflict-resolve-btn:disabled {
+  background: #8aa98b;
+  cursor: default;
+}
+.conflict-banner.conflict-resolved {
+  background: #dff0d8;
+  color: #2d5a2e;
+  border-color: #a3c293;
+}
+.conflict-resolved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 4px 10px;
+  background: #dff0d8;
+  color: #2d5a2e;
+  border: 1px solid #a3c293;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
 .conflict-emailed-badge {
   display: inline-flex;
   align-items: center;
@@ -483,6 +519,48 @@ function copyConflictDraft(btn) {
   } else {
     text.select(); document.execCommand('copy'); done();
   }
+}
+
+function resolveConflict(btn) {
+  // One class joins by Zoom, the other keeps the Cisco machine. The host has to be
+  // told, so the Airtable note is written before the conflict is cleared; if that
+  // fails nothing changes and the button comes back.
+  const sessionDiv = $(btn).closest('.session');
+  const sessionId = btn.dataset.sessionId || '';
+  if (!sessionId) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  fetch('/gn_ticket/conflict_resolved', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: sessionId,
+      conflict_session_id: btn.dataset.conflictSessionId || '',
+    }),
+  })
+    .then(response => response.json())
+    .then(result => {
+      if (!result.ok) throw new Error(result.error || 'Could not resolve the conflict');
+
+      const badge = document.createElement('span');
+      badge.className = 'conflict-resolved-badge';
+      badge.textContent = '✅ Resolved — joining by Zoom';
+      btn.replaceWith(badge);
+
+      // The clash is settled, so this session is booked like any other — unless it
+      // was also removed by hand, which is a separate decision and stands.
+      sessionDiv.removeClass('session-conflict');
+      if (!sessionDiv.hasClass('session-excluded')) {
+        sessionDiv.find('input[name="book_me"]').val('y');
+      }
+    })
+    .catch(error => {
+      btn.disabled = false;
+      btn.textContent = '✅ Resolved';
+      alert(error.message);
+    });
 }
 
 function openConflictEmail(btn) {
@@ -749,6 +827,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 data-other-session-id="{{ session.conflict_other_id | default('') }}"
                 onclick="openConflictEmail(this)">📧 Email teachers</button>
               {% endif %}
+              <button type="button" class="conflict-resolve-btn" id="resolve-btn-{{ session.s_id }}"
+                data-session-id="{{ session.s_id }}"
+                data-conflict-session-id="{{ session.conflict_other_id | default('') }}"
+                title="This class joins by Zoom, the other keeps the Cisco machine. Adds a host note in Airtable and books this session."
+                onclick="resolveConflict(this)">✅ Resolved</button>
             {% endif %}
           </div>
           {% set school_email = teacher_conflict_email(session) %}
@@ -759,6 +842,8 @@ document.addEventListener('DOMContentLoaded', function() {
             <button type="button" onclick="copyConflictDraft(this)">Copy text</button>
           </details>
           {% endif %}
+          {% elif session.conflict_resolved %}
+          <div class="conflict-banner conflict-resolved">✅ Conflict resolved — this class is joining by Zoom, and the host has been told.</div>
           {% elif session.conflict_type == 'last_minute' %}
           <div class="conflict-banner conflict-last-minute">⏰ Last minute: {{ session.conflict_details }}</div>
           {% elif session.conflict_type == 'gn_ticket' %}

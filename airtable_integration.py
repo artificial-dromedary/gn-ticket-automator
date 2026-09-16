@@ -407,6 +407,30 @@ class AirtableIntegration:
             print(f"Error updating Airtable field: {e}")
             raise Exception(f"Failed to update session field: {e}")
 
+    def append_session_note(self, session_id, field_name, note):
+        """Add a line to a free-text field without losing what is already there.
+
+        Host notes are written by people — "Joining via zoom in the classroom", who
+        is late, which mic the room has — so this appends rather than replacing. A
+        note already present is left alone, which makes clicking twice harmless.
+        """
+        url = f"{self.base_url}/{session_id}"
+        try:
+            response = requests.get(url, headers=self.headers,
+                                    params={"fields[]": field_name}, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            existing = (response.json().get("fields", {}).get(field_name) or "").strip()
+        except requests.exceptions.RequestException as e:
+            logger.error("Error reading %s before appending: %s", field_name, e)
+            raise Exception(f"Failed to read session field: {e}")
+
+        if note.strip() in existing:
+            return existing
+
+        combined = f"{existing}\n{note}".strip() if existing else note
+        self.update_session_field(session_id, field_name, combined)
+        return combined
+
     def test_connection(self):
         """Test the Airtable connection and permissions"""
         try:
