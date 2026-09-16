@@ -19,8 +19,8 @@ from airtable_integration import create_airtable_client
 from conflict import check_for_time_conflicts
 from db import SessionLocal
 from emailer import send_booking_summary_email, send_conflict_email, send_daily_summary_email
-from models import (ConflictEmailLog, DailySummaryLog, ScanRequest, ScanResult,
-                    SessionExclusion, TaskLock, TicketSubmission, User)
+from models import (ConflictEmailLog, ConflictResolution, DailySummaryLog, ScanRequest,
+                    ScanResult, SessionExclusion, TaskLock, TicketSubmission, User)
 from ticket_submission_log import TicketSubmissionLog
 from user_profiles import DEFAULT_SCAN_FREQUENCY_HOURS, user_manager
 import gn_ticket
@@ -314,6 +314,76 @@ def _session_to_dict(session):
     }
 
 
+ZOOM_RESOLUTION_NOTE = ("Class is connecting via Zoom due to another session using the "
+                        "Cisco machine at the same time.")
+
+# The Airtable field a host reads before a session. Free text, written by people,
+# so the note is appended to whatever is already in it.
+HOST_NOTES_FIELD = "Session Host Notes"
+
+
+def resolved_conflict_pairs(user_email):
+    """Clashes this person has already settled, as {session_id: other_session_id}."""
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return {}
+        return {
+            session_id: conflict_session_id or ""
+            for session_id, conflict_session_id in db.execute(
+                select(ConflictResolution.session_id, ConflictResolution.conflict_session_id)
+                .where(ConflictResolution.user_id == user.id)
+            ).all()
+        }
+
+
+def record_conflict_resolution(user_email, session_id, conflict_session_id):
+    """Remember that this clash was settled. Idempotent: clicking twice is harmless."""
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
+        if not user:
+            return False
+        db.execute(sa_delete(ConflictResolution).where(
+            ConflictResolution.user_id == user.id,
+            ConflictResolution.session_id == session_id,
+        ))
+        db.add(ConflictResolution(
+            user_id=user.id,
+            session_id=session_id,
+            conflict_session_id=conflict_session_id or "",
+        ))
+        db.commit()
+        return True
+
+
+def clear_resolved_conflicts(sessions, resolved_pairs):
+    """Drop the conflict flag from sessions whose clash the person already settled.
+
+    Only a time clash can be settled this way — a last-minute hold or a ghost ticket
+    is a different problem and stays. A resolution is tied to the pair it was made
+    for, so if the session now clashes with a different one it is held back again.
+    """
+    if not resolved_pairs:
+        return sessions
+
+    for session in sessions:
+        if getattr(session, "conflict_type", None) != "time":
+            continue
+        resolved_against = resolved_pairs.get(session.s_id)
+        if resolved_against is None:
+            continue
+        other_id = getattr(session, "conflict_other_id", None) or ""
+        if resolved_against and other_id and resolved_against != other_id:
+            continue
+        session.is_conflict = False
+        session.conflict_type = None
+        session.conflict_details = ""
+        # Kept so the card can say why it looks clean, rather than the clash simply
+        # vanishing and leaving the person wondering whether it was ever there.
+        session.conflict_resolved = True
+    return sessions
+
+
 def _annotate_conflicts(airtable_client, candidate_sessions, user_email,
                         window_past_days, window_future_days):
     """Flag each candidate that collides with an existing booking or a submitted ticket."""
@@ -329,7 +399,9 @@ def _annotate_conflicts(airtable_client, candidate_sessions, user_email,
     ) if school_names else []
 
     historical_entries = TicketSubmissionLog().get_entries(user_email)
-    return check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
+    annotated = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
+    # A clash the person settled on the dashboard must not come back every scan.
+    return clear_resolved_conflicts(annotated, resolved_conflict_pairs(user_email))
 
 
 def _conflict_key(entry):

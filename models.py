@@ -85,6 +85,27 @@ class ConflictEmailLog(Base):
     emailed_at = Column(DateTime, default=utcnow)
 
 
+class ConflictResolution(Base):
+    """A clash the person settled themselves, so the scan stops holding it back.
+
+    The usual answer to two sessions overlapping is that one class joins by Zoom
+    while the other keeps the Cisco machine. Nothing about that changes the times
+    in Airtable, so every later scan finds the same overlap and holds the session
+    back again. A row here is the decision, and from then on the session is booked
+    like any other.
+
+    Kept per pair: resolving this session against that one says nothing about a
+    clash it might pick up with a third session later.
+    """
+    __tablename__ = "conflict_resolutions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    session_id = Column(String(255), nullable=False, index=True)   # the session joining by Zoom
+    conflict_session_id = Column(String(255))                       # the one keeping the machine
+    resolved_at = Column(DateTime, default=utcnow, nullable=False)
+
+
 class SessionExclusion(Base):
     """A session the person removed on the dashboard, held back from every future run.
 

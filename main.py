@@ -457,6 +457,8 @@ def gn_ticket_page():
                 )
                 historical_entries = ticket_log.get_entries(user['email'])
                 candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
+                candidate_sessions = tasks.clear_resolved_conflicts(
+                    candidate_sessions, tasks.resolved_conflict_pairs(user['email']))
 
         submitted_ticket_log = ticket_log.get_entries(user['email'], window_past_days=window_past_days)
         submitted_ticket_log = sorted(submitted_ticket_log, key=lambda entry: entry.get('submitted_at', ''), reverse=True)
@@ -680,6 +682,46 @@ def record_conflict_email():
     except Exception as e:
         logging.error(f"conflict_emailed error: {e}", exc_info=True)
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route("/gn_ticket/conflict_resolved", methods=["POST"])
+@require_auth
+def resolve_conflict_route():
+    """Settle a clash: this class joins by Zoom, the other keeps the Cisco machine.
+
+    Two things have to happen together. The host needs to know to expect Zoom, so
+    the note goes on the Airtable record they read before the session; and the scan
+    has to stop holding the session back, or the same overlap is found again in an
+    hour. The note is written first — if Airtable refuses, nothing is recorded and
+    the button stays as it was.
+    """
+    user = session['user']
+    data = request.get_json(silent=True) or {}
+    session_id = (data.get('session_id') or '').strip()
+    conflict_session_id = (data.get('conflict_session_id') or '').strip()
+    if not session_id:
+        return jsonify({'ok': False, 'error': 'missing session_id'}), 400
+
+    profile = user_manager.load_profile(user['email'])
+    if not profile or not profile.get('airtable_api_key'):
+        return jsonify({'ok': False, 'error': 'Airtable is not set up for this account'}), 400
+
+    try:
+        airtable_client = create_airtable_client(profile['airtable_api_key'])
+        airtable_client.append_session_note(session_id, tasks.HOST_NOTES_FIELD,
+                                            tasks.ZOOM_RESOLUTION_NOTE)
+    except Exception as e:
+        logging.error(f"conflict_resolved note failed: {e}", exc_info=True)
+        return jsonify({'ok': False, 'error': f'Could not write the host note: {e}'}), 502
+
+    try:
+        if not tasks.record_conflict_resolution(user['email'], session_id, conflict_session_id):
+            return jsonify({'ok': False, 'error': 'user not found'}), 404
+    except Exception as e:
+        logging.error(f"conflict_resolved error: {e}", exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    return jsonify({'ok': True, 'note': tasks.ZOOM_RESOLUTION_NOTE})
 
 
 @app.route("/gn_ticket/set_excluded", methods=["POST"])
