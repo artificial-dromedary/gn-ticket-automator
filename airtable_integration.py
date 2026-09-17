@@ -416,8 +416,10 @@ class AirtableIntegration:
         """
         url = f"{self.base_url}/{session_id}"
         try:
-            response = requests.get(url, headers=self.headers,
-                                    params={"fields[]": field_name}, timeout=REQUEST_TIMEOUT)
+            # The whole record, deliberately: Airtable's retrieve-a-record endpoint
+            # takes no "fields" parameter — only list-records does — and rejects the
+            # request with a 422 if one is sent.
+            response = requests.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             existing = (response.json().get("fields", {}).get(field_name) or "").strip()
         except requests.exceptions.RequestException as e:
