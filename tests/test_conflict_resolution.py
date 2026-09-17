@@ -120,17 +120,21 @@ def _note_client(monkeypatch, existing_note):
     import airtable_integration
 
     written = {}
-    monkeypatch.setattr(airtable_integration.requests, "get",
-                        lambda *a, **k: FakeResponse(
-                            {"fields": {tasks.HOST_NOTES_FIELD: existing_note}}))
+    reads = []
+
+    def fake_get(url, **kwargs):
+        reads.append(kwargs)
+        return FakeResponse({"fields": {tasks.HOST_NOTES_FIELD: existing_note}})
+
+    monkeypatch.setattr(airtable_integration.requests, "get", fake_get)
     monkeypatch.setattr(airtable_integration.requests, "patch",
                         lambda url, **kwargs: written.update(kwargs["json"]["fields"])
                         or FakeResponse({}))
-    return airtable_integration.AirtableIntegration("patFakeKey"), written
+    return airtable_integration.AirtableIntegration("patFakeKey"), written, reads
 
 
 def test_the_host_note_is_added_to_the_session(monkeypatch):
-    client, written = _note_client(monkeypatch, "")
+    client, written, reads = _note_client(monkeypatch, "")
 
     client.append_session_note("recConflict", tasks.HOST_NOTES_FIELD,
                                tasks.ZOOM_RESOLUTION_NOTE)
@@ -140,7 +144,7 @@ def test_the_host_note_is_added_to_the_session(monkeypatch):
 
 def test_a_note_someone_wrote_by_hand_is_kept(monkeypatch):
     """Host notes carry things the host needs — who is late, where the mic is."""
-    client, written = _note_client(monkeypatch, "They will be a few minutes late.")
+    client, written, reads = _note_client(monkeypatch, "They will be a few minutes late.")
 
     client.append_session_note("recConflict", tasks.HOST_NOTES_FIELD,
                                tasks.ZOOM_RESOLUTION_NOTE)
@@ -149,8 +153,21 @@ def test_a_note_someone_wrote_by_hand_is_kept(monkeypatch):
         f"They will be a few minutes late.\n{tasks.ZOOM_RESOLUTION_NOTE}")
 
 
+def test_the_record_is_read_without_a_fields_parameter(monkeypatch):
+    """Airtable's retrieve-a-record endpoint takes no "fields" — it 422s if sent one.
+
+    Only list-records accepts it, and the first live click found that out.
+    """
+    client, _, reads = _note_client(monkeypatch, "")
+
+    client.append_session_note("recConflict", tasks.HOST_NOTES_FIELD,
+                               tasks.ZOOM_RESOLUTION_NOTE)
+
+    assert reads and "params" not in reads[0]
+
+
 def test_resolving_twice_does_not_write_the_note_twice(monkeypatch):
-    client, written = _note_client(monkeypatch, tasks.ZOOM_RESOLUTION_NOTE)
+    client, written, reads = _note_client(monkeypatch, tasks.ZOOM_RESOLUTION_NOTE)
 
     client.append_session_note("recConflict", tasks.HOST_NOTES_FIELD,
                                tasks.ZOOM_RESOLUTION_NOTE)
