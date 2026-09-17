@@ -122,13 +122,15 @@ def _note_client(monkeypatch, existing_note):
     written = {}
     reads = []
 
-    def fake_get(url, **kwargs):
+    def fake_get(self, url, **kwargs):
         reads.append(kwargs)
         return FakeResponse({"fields": {tasks.HOST_NOTES_FIELD: existing_note}})
 
-    monkeypatch.setattr(airtable_integration.requests, "get", fake_get)
-    monkeypatch.setattr(airtable_integration.requests, "patch",
-                        lambda url, **kwargs: written.update(kwargs["json"]["fields"])
+    # The client issues its requests through a session of its own, so that it can
+    # carry a retry policy. Patching Session is the seam that reaches it.
+    monkeypatch.setattr(airtable_integration.requests.Session, "get", fake_get)
+    monkeypatch.setattr(airtable_integration.requests.Session, "patch",
+                        lambda self, url, **kwargs: written.update(kwargs["json"]["fields"])
                         or FakeResponse({}))
     return airtable_integration.AirtableIntegration("patFakeKey"), written, reads
 
