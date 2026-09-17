@@ -53,6 +53,37 @@ def friendly_datetime(value, fallback="unknown", tz=None):
     return f"{local:%a}, {local:%b} {day} at {hour}:{local:%M} {meridiem} {zone}".strip()
 
 
+def school_datetime(value, tz=None, fallback="unknown"):
+    """Render a session time as 'Thursday, June 4 at 10:00 AM EDT' for a school.
+
+    Used in wording that goes to teachers, so it reads in the school's own zone
+    when Airtable has one and falls back to the display zone otherwise.
+    """
+    if not value:
+        return fallback
+
+    moment = value
+    if isinstance(moment, str):
+        try:
+            moment = datetime.fromisoformat(moment.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    if not isinstance(moment, datetime):
+        return fallback
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+
+    try:
+        local = moment.astimezone(ZoneInfo(tz or DISPLAY_TZ))
+    except (ZoneInfoNotFoundError, ValueError):
+        local = moment.astimezone(ZoneInfo(DISPLAY_TZ))
+
+    hour = str((local.hour % 12) or 12)
+    meridiem = "AM" if local.hour < 12 else "PM"
+    zone = local.tzname() or ""
+    return f"{local:%A}, {local:%B} {local.day} at {hour}:{local:%M} {meridiem} {zone}".strip()
+
+
 # AP-style month abbreviations: "Sept 24", not strftime's "Sep 24".
 _SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "June",
                  "July", "Aug", "Sept", "Oct", "Nov", "Dec"]
@@ -194,18 +225,30 @@ def teacher_conflict_subject(session):
 def teacher_conflict_email(session):
     """The copy/paste email to the teacher whose class would join by Zoom, or None.
 
-    Deliberately says nothing about the other class or its teacher: this goes to one
-    person about their own session, and the overlap is only the reason for it.
+    It goes to one teacher and asks nothing of the other, but it does list both
+    sessions: the reader has to be able to tell which of their bookings this is
+    about, and the subject only carries the date.
     """
-    if not _moving_side(session):
+    pair = _conflict_pair(session)
+    if not pair:
         return None
+    by_time, _, _ = pair
+    tz = _field(session, "timezone") or None
+
+    listing = "\n".join(
+        f"\u2022 {s['title']} ({s['teacher']}): {school_datetime(s['start'], tz)}"
+        for s in by_time
+    )
     return (
         "Hi there,\n\n"
         "I just wanted to let you know that there are two sessions overlapping for "
         "your school. In most cases, as long as your internet is pretty reliable, you "
         "can connect from the classroom via Zoom (instead of the Cisco videoconference "
         "machine). If you've had trouble with Zoom and video streaming in the past, "
-        "let me know and we can rebook your session."
+        "let me know and we can rebook your session. Otherwise, just use the Zoom link "
+        "in your classroom and you don't need to do anything.\n\n"
+        "The two sessions are:\n\n"
+        f"{listing}"
     )
 
 

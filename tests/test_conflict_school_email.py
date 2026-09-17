@@ -2,7 +2,8 @@
 
 The notification says what was held back; the draft under it goes to the one
 teacher whose class would move to Zoom. The other class keeps the Cisco machine
-and is not asked for anything, so it is not written to and not named.
+and is not asked for anything, so its teacher is not written to — but both
+sessions are listed, or the reader cannot tell which booking is meant.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -43,8 +44,31 @@ def test_the_draft_matches_the_wording_sent_to_teachers():
         "your school. In most cases, as long as your internet is pretty reliable, you "
         "can connect from the classroom via Zoom (instead of the Cisco videoconference "
         "machine). If you've had trouble with Zoom and video streaming in the past, "
-        "let me know and we can rebook your session."
+        "let me know and we can rebook your session. Otherwise, just use the Zoom link "
+        "in your classroom and you don't need to do anything.\n\n"
+        "The two sessions are:\n\n"
+        "• Beam Paints Watercolour - Fish (Frederick Addae): Thursday, June 4 at 10:00 AM EDT\n"
+        "• Blueberry Beading (Nicole King): Thursday, June 4 at 10:30 AM EDT"
     )
+
+
+def test_both_sessions_are_listed_in_start_order():
+    """The subject only carries a date, so the body has to identify the bookings."""
+    fish, beads = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
+    check_for_time_conflicts([fish, beads], [], now=_now())
+
+    draft = teacher_conflict_email(beads)
+    assert draft.index("Beam Paints") < draft.index("Blueberry Beading")
+
+
+def test_a_session_with_two_teachers_lists_them_both():
+    fish, beads = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
+    beads.teachers = ["Nicole King", "Arlene Vasquez"]
+    beads.teacher_emails = ["nicoleking@example.com", "avasquez@example.com"]
+    check_for_time_conflicts([fish, beads], [], now=_now())
+
+    assert ("• Blueberry Beading (Nicole King and Arlene Vasquez): "
+            "Thursday, June 4 at 10:30 AM EDT") in teacher_conflict_email(beads)
 
 
 def test_only_the_teacher_who_would_move_to_zoom_is_written_to():
@@ -143,5 +167,7 @@ def test_the_daily_summary_reads_booked_then_conflicts_then_teachers_then_draft(
              body.index("To: Nicole King <nicoleking@example.com>"),
              body.index("Hi there,"), body.index("REMOVED, NOT BEING BOOKED")]
     assert order == sorted(order)
+    # Named in the listing, but never a recipient.
     assert "frederickaddae@example.com" not in body
+    assert "Frederick Addae" in body
 
