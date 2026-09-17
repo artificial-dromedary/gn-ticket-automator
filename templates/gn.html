@@ -565,8 +565,11 @@ function resolveConflict(btn) {
 
 function openConflictEmail(btn) {
   const d = btn.dataset;
-  const to = [d.teacherEmail, d.otherTeacherEmail].filter(Boolean).join(',');
-  const subject = `Time conflict: overlapping sessions`;
+  // Only the teacher whose class would move to Zoom — the other keeps the machine
+  // and is not being asked for anything. Both come from the server so the wording
+  // lives in one place.
+  const to = d.to || '';
+  const subject = d.subject || '';
   const draft = document.getElementById('conflict-draft-' + d.sessionId);
   const body = draft ? draft.value : '';
 
@@ -821,9 +824,9 @@ document.addEventListener('DOMContentLoaded', function() {
               <span class="conflict-emailed-badge" id="emailed-badge-{{ session.s_id }}">📬 Email sent — awaiting teacher response</span>
               {% else %}
               <button type="button" class="conflict-email-btn" id="email-btn-{{ session.s_id }}"
-                data-teacher-email="{{ (session.teacher_emails or [session.teacher_email]) | select | join(',') | e }}"
+                data-to="{{ teacher_conflict_recipients(session) | e }}"
+                data-subject="{{ teacher_conflict_subject(session) | default('') | e }}"
                 data-session-id="{{ session.s_id }}"
-                data-other-teacher-email="{{ (session.conflict_other_teacher_emails or [session.conflict_other_teacher_email]) | select | join(',') | e }}"
                 data-other-session-id="{{ session.conflict_other_id | default('') }}"
                 onclick="openConflictEmail(this)">📧 Email teachers</button>
               {% endif %}
