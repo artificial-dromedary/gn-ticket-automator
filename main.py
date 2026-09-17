@@ -108,7 +108,9 @@ from ticket_submission_log import TicketSubmissionLog
 from google_auth_oauthlib.flow import Flow
 from collections import deque
 from conflict import check_for_time_conflicts
-from emailer import DISPLAY_TZ, friendly_datetime, send_booking_summary_email, teacher_conflict_email
+from emailer import (DISPLAY_TZ, friendly_datetime, send_booking_summary_email,
+                     teacher_conflict_email, teacher_conflict_recipients,
+                     teacher_conflict_subject)
 from db import DATABASE_URL, SessionLocal
 from models import ScanResult, User, ConflictEmailLog
 import tasks
@@ -178,6 +180,8 @@ app.jinja_env.filters['friendly_datetime'] = friendly_datetime
 app.jinja_env.globals['display_timezone'] = DISPLAY_TZ
 # Same wording as the conflict emails, so the dashboard and the inbox never disagree.
 app.jinja_env.globals['teacher_conflict_email'] = teacher_conflict_email
+app.jinja_env.globals['teacher_conflict_subject'] = teacher_conflict_subject
+app.jinja_env.globals['teacher_conflict_recipients'] = teacher_conflict_recipients
 
 
 def notify_booking_finished(user_email, successful, failed, conflicts=None):

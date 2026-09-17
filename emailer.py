@@ -53,12 +53,13 @@ def friendly_datetime(value, fallback="unknown", tz=None):
     return f"{local:%a}, {local:%b} {day} at {hour}:{local:%M} {meridiem} {zone}".strip()
 
 
-def school_datetime(value, tz=None, fallback="unknown"):
-    """Render a session time as 'Thursday, June 4 at 10:00 AM EDT' for a school.
+# AP-style month abbreviations: "Sept 24", not strftime's "Sep 24".
+_SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "June",
+                 "July", "Aug", "Sept", "Oct", "Nov", "Dec"]
 
-    Used in wording that goes to teachers, so it reads in the school's own zone
-    when Airtable has one and falls back to the display zone otherwise.
-    """
+
+def short_date(value, tz=None, fallback="an upcoming"):
+    """'Sept 24' in the school's own zone — the date as a teacher would write it."""
     if not value:
         return fallback
 
@@ -67,7 +68,7 @@ def school_datetime(value, tz=None, fallback="unknown"):
         try:
             moment = datetime.fromisoformat(moment.replace("Z", "+00:00"))
         except ValueError:
-            return value
+            return fallback
     if not isinstance(moment, datetime):
         return fallback
     if moment.tzinfo is None:
@@ -78,10 +79,7 @@ def school_datetime(value, tz=None, fallback="unknown"):
     except (ZoneInfoNotFoundError, ValueError):
         local = moment.astimezone(ZoneInfo(DISPLAY_TZ))
 
-    hour = str((local.hour % 12) or 12)
-    meridiem = "AM" if local.hour < 12 else "PM"
-    zone = local.tzname() or ""
-    return f"{local:%A}, {local:%B} {local.day} at {hour}:{local:%M} {meridiem} {zone}".strip()
+    return f"{_SHORT_MONTHS[local.month - 1]} {local.day}"
 
 
 def _field(session, name, default=None):
@@ -165,39 +163,49 @@ def _conflict_pair(session):
     return by_time, previous, current
 
 
-def _first_name(full_name):
-    return full_name.split()[0] if full_name.split() else full_name
-
-
-def _first_names(side):
-    """'Zak and Arlene' — everyone on one side of the clash, on first-name terms."""
-    return _join_names([_first_name(name) for name in side["names"]], side["teacher"])
-
-
-def teacher_conflict_email(session):
-    """The copy/paste email to a school about two overlapping sessions, or None."""
+def _moving_side(session):
+    """The session being asked onto Zoom: the one that does not keep the machine."""
     pair = _conflict_pair(session)
     if not pair:
         return None
-    by_time, previous, current = pair
-    tz = _field(session, "timezone") or None
+    _, _, current = pair
+    return current
 
-    bullets = "\n\n".join(
-        f"\u2022 {s['title']} ({s['teacher']}): {school_datetime(s['start'], tz)}" for s in by_time
-    )
+
+def teacher_conflict_recipients(session):
+    """Who the conflict email goes to, comma separated, or "".
+
+    Only the teacher whose session would move to Zoom. The other class keeps the
+    Cisco machine and nothing about it changes, so there is nothing to ask them.
+    """
+    moving = _moving_side(session)
+    return moving["email"] if moving else ""
+
+
+def teacher_conflict_subject(session):
+    """'FYI - Connect via Zoom for Sept 24 Connected North session', or None."""
+    moving = _moving_side(session)
+    if not moving:
+        return None
+    when = short_date(moving["start"], _field(session, "timezone") or None)
+    return f"FYI - Connect via Zoom for {when} Connected North session"
+
+
+def teacher_conflict_email(session):
+    """The copy/paste email to the teacher whose class would join by Zoom, or None.
+
+    Deliberately says nothing about the other class or its teacher: this goes to one
+    person about their own session, and the overlap is only the reason for it.
+    """
+    if not _moving_side(session):
+        return None
     return (
         "Hi there,\n\n"
-        "In setting up the videoconference connection, I saw that there are two "
-        "sessions overlapping for your school:\n\n"
-        f"{bullets}\n\n"
-        # The session keeping the machine is already set up, so Zoom from the
-        # classroom is only on the table for the other one — name that teacher
-        # rather than leaving the school to work out which of them is meant.
-        f"If your internet is pretty reliable/fast, {_first_names(current)} can connect "
-        "from the classroom via Zoom (rather than the Cisco machine). Otherwise, "
-        f"{_first_names(previous)}'s session will connect on the Cisco machine as it is "
-        f"already set up, and we can rebook {_first_names(current)}'s session.\n\n"
-        "Could you let me know what you'd like to do?"
+        "I just wanted to let you know that there are two sessions overlapping for "
+        "your school. In most cases, as long as your internet is pretty reliable, you "
+        "can connect from the classroom via Zoom (instead of the Cisco videoconference "
+        "machine). If you've had trouble with Zoom and video streaming in the past, "
+        "let me know and we can rebook your session."
     )
 
 
@@ -212,7 +220,7 @@ def _append_teacher_emails(lines, conflict_sessions):
         draft = teacher_conflict_email(session)
         if draft:
             seen.add(key)
-            drafts.append((session, _conflict_pair(session)[0], draft))
+            drafts.append((session, _moving_side(session), draft))
 
     if not drafts:
         return
@@ -220,11 +228,13 @@ def _append_teacher_emails(lines, conflict_sessions):
     divider = "-" * 60
     lines.append("")
     lines.append(f"DRAFT EMAIL{'S' if len(drafts) > 1 else ''} TO TEACHERS ({len(drafts)})")
-    for session, teachers, draft in drafts:
+    for session, moving, draft in drafts:
         lines.append("")
         lines.append(f"School: {session.get('school', 'Unknown')}")
-        for teacher in teachers:
-            lines.append(f"  {teacher['teacher']}: {teacher['email']}")
+        # Only the teacher moving to Zoom: the other class keeps the machine and is
+        # not being asked for anything.
+        lines.append(f"  To: {moving['teacher']} <{moving['email']}>")
+        lines.append(f"  Subject: {teacher_conflict_subject(session)}")
         lines.append("")
         lines.append("Copy and paste the text between the lines:")
         lines.append(divider)
