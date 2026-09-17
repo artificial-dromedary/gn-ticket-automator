@@ -23,11 +23,13 @@ def capture_filter(monkeypatch, call):
     """Run `call` and return the filterByFormula Airtable was sent."""
     seen = {}
 
-    def fake_get(url, headers=None, params=None, timeout=None):
+    def fake_get(self, url, headers=None, params=None, timeout=None):
         seen["formula"] = params.get("filterByFormula", "")
         return FakeResponse()
 
-    monkeypatch.setattr(airtable_integration.requests, "get", fake_get)
+    # The client issues its requests through a session of its own, so that it can
+    # carry a retry policy. Patching Session.get is the seam that reaches it.
+    monkeypatch.setattr(airtable_integration.requests.Session, "get", fake_get)
     call()
     return seen["formula"]
 

@@ -6,8 +6,53 @@ from dateutil import parser
 import pytz
 import logging
 
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 logger = logging.getLogger(__name__)
-REQUEST_TIMEOUT = int(os.getenv("REQUESTS_TIMEOUT", "15"))
+
+# Airtable stops answering mid-read for a few seconds now and then. At 15 seconds
+# one of those was enough to take down a whole scheduled scan, so the read gets
+# longer to finish and, more to the point, a second chance.
+#
+# Connect and read are separate because they fail differently: an unreachable host
+# should give up quickly, a slow one deserves to be waited out.
+CONNECT_TIMEOUT = float(os.getenv("AIRTABLE_CONNECT_TIMEOUT", "10"))
+READ_TIMEOUT = float(os.getenv("REQUESTS_TIMEOUT", "30"))
+REQUEST_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)
+
+# Attempts after the first, so 3 means four tries with 0s, 2s and 4s between them.
+RETRY_ATTEMPTS = int(os.getenv("AIRTABLE_RETRY_ATTEMPTS", "3"))
+
+
+def _build_http_session():
+    """A requests session that retries the failures worth retrying.
+
+    A read timeout and Airtable's own 429/5xx answers are transient: the same
+    request a moment later usually works, and the alternative is failing a scan
+    over a blip. PATCH is retried alongside GET because every write here sets one
+    named field to a fixed value, so repeating one cannot do more than the first
+    attempt already did.
+
+    Retries live on the adapter rather than in a loop of our own so that they
+    cover every call site, including the pagination inside get_sessions.
+    """
+    retry = Retry(
+        total=RETRY_ATTEMPTS,
+        connect=RETRY_ATTEMPTS,
+        read=RETRY_ATTEMPTS,
+        status=RETRY_ATTEMPTS,
+        backoff_factor=1,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "PATCH"}),
+        respect_retry_after_header=True,
+        # A spent status retry comes back as the response rather than an exception,
+        # so raise_for_status() still reports it with the body the logs expect.
+        raise_on_status=False,
+    )
+    session = requests.Session()
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
 
 
 def future_cutoff(window_future_days):
@@ -190,6 +235,9 @@ class AirtableIntegration:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+        # Per client rather than per module: one scan paginates through several
+        # requests and reuses the connection, and nothing is shared across threads.
+        self.http = _build_http_session()
 
     def get_sessions(self, status_filters=None, user_email=None, window_past_days=14, window_future_days=90):
         """
@@ -265,7 +313,7 @@ class AirtableIntegration:
                 params['offset'] = offset
 
             try:
-                response = requests.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
+                response = self.http.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
 
                 data = response.json()
@@ -369,7 +417,7 @@ class AirtableIntegration:
                 params['offset'] = offset
 
             try:
-                response = requests.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
+                response = self.http.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
                 data = response.json()
                 for record in data.get('records', []):
@@ -400,7 +448,7 @@ class AirtableIntegration:
         }
 
         try:
-            response = requests.patch(url, headers=self.headers, json=data, timeout=REQUEST_TIMEOUT)
+            response = self.http.patch(url, headers=self.headers, json=data, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -419,7 +467,7 @@ class AirtableIntegration:
             # The whole record, deliberately: Airtable's retrieve-a-record endpoint
             # takes no "fields" parameter — only list-records does — and rejects the
             # request with a 422 if one is sent.
-            response = requests.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT)
+            response = self.http.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             existing = (response.json().get("fields", {}).get(field_name) or "").strip()
         except requests.exceptions.RequestException as e:
@@ -438,7 +486,7 @@ class AirtableIntegration:
         try:
             # Try to fetch just one record to test access
             params = {'pageSize': 1}
-            response = requests.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
+            response = self.http.get(self.base_url, headers=self.headers, params=params, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
 
             data = response.json()
