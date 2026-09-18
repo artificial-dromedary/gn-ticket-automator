@@ -70,8 +70,8 @@ envVarGroups:
         sync: false
       # The key the unmaintained desktop app encrypted with (APP_ENCRYPTION_KEY from
       # its bundled .env), so people moving off it can upload their gn_ticket.db
-      # instead of redoing setup. The desktop app's source is at the git tag
-      # desktop-app-final. Different from APP_ENCRYPTION_KEY, which Render generated
+      # instead of redoing setup. The desktop app's source is at commit f04ff33,
+      # the last revision that carried it. Different from APP_ENCRYPTION_KEY, which Render generated
       # for this service and which cannot open anything written on a Mac. List every
       # key the handed-out builds used, comma-separated, if there was more than one.
       - key: DESKTOP_APP_ENCRYPTION_KEY

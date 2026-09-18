@@ -18,8 +18,16 @@ Both run on Render from the same Docker image; see `render.yaml`, which is also
 where every environment variable is documented.
 
 The macOS desktop app that preceded this is no longer maintained. Its source is
-at the git tag `desktop-app-final`. People still on it can bring their saved
-setup across with the "Bring your settings across" link on the setup page.
+at commit `f04ff33`, the last revision that carried it:
+
+```sh
+git show f04ff33:updater.py          # or any other file it had
+git checkout -b desktop f04ff33      # to build it again
+```
+
+People still on the desktop app can bring their saved setup across with the
+"Bring your settings across" link on the setup page. That import path stays
+supported, and `DESKTOP_APP_ENCRYPTION_KEY` is what makes it work.
 
 ## Running it locally
 
