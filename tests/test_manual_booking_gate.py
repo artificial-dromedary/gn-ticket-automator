@@ -20,7 +20,7 @@ def client():
 
 
 def test_it_is_on_by_default():
-    """The desktop build sets nothing and must keep working as before."""
+    """A deployment that sets nothing books in-process, as before."""
     import importlib
     import os
 
@@ -36,7 +36,7 @@ def test_booking_is_refused_when_disabled(client, monkeypatch):
     response = client.post("/gn_ticket/book_sessions", data={})
 
     assert response.status_code == 403
-    assert b"desktop app" in response.data
+    assert b"Run scan now" in response.data
 
 
 def test_one_button_that_points_where_booking_can_happen():

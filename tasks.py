@@ -1,3 +1,9 @@
+"""The scan-and-book pipeline, and everything the scheduled run does.
+
+Runs in whichever process calls it: the hourly cron job (run_scan.py) or, where
+the web service has the memory for a browser, a thread inside the web app. There
+is no queue and no broker; the database lock table is what keeps two runs apart.
+"""
 import json
 import logging
 import os
@@ -8,29 +14,24 @@ from zoneinfo import ZoneInfo
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from celery import Celery
-from celery.schedules import crontab
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 
 from airtable_integration import create_airtable_client
-from conflict import check_for_time_conflicts
+from conflict import check_for_time_conflicts, conflict_payload
 from db import SessionLocal
 from emailer import send_booking_summary_email, send_conflict_email, send_daily_summary_email
 from models import (ConflictEmailLog, ConflictResolution, DailySummaryLog, ScanRequest,
-                    ScanResult, SessionExclusion, TaskLock, TicketSubmission, User)
-from ticket_submission_log import TicketSubmissionLog
+                    ScanResult, SessionExclusion, TaskLock, TicketSubmission, User, utcnow)
+from ticket_submission_log import ticket_log
 from user_profiles import DEFAULT_SCAN_FREQUENCY_HOURS, user_manager
 import gn_ticket
 
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-# When there is no Celery broker — the Render Cron Job deployment — tasks run inline in
-# the calling process instead of being enqueued. Set GN_INLINE_TASKS=1 there.
-INLINE_TASKS = os.getenv("GN_INLINE_TASKS", "").strip().lower() in ("1", "true", "yes")
+# The Zoom account whose meetings the Cisco bridge dials into.
+ZOOM_ACCOUNT = os.getenv("GN_ZOOM_ACCOUNT", "connectednorth@takingitglobal.org")
 
 # A dry run does everything except submit to ServiceNow: it reads Airtable, detects
 # conflicts, records the scan, and reports what it *would* have booked.
@@ -77,18 +78,6 @@ SCAN_TZ = os.getenv("AUTO_SCAN_TZ", "America/New_York")
 # a daily user is scanned at 9am, a twice-daily one at 9am and 9pm, and so on.
 SCAN_ANCHOR_HOUR = int(os.getenv("SCAN_ANCHOR_HOUR", "9"))
 
-celery_app = Celery("gn_ticket", broker=REDIS_URL, backend=REDIS_URL)
-celery_app.conf.timezone = SCAN_TZ
-celery_app.conf.beat_schedule = {
-    "daily_auto_scan": {
-        "task": "tasks.run_scheduled_scan",
-        "schedule": crontab(
-            hour=int(os.getenv("AUTO_SCAN_HOUR", "6")),
-            minute=int(os.getenv("AUTO_SCAN_MINUTE", "0")),
-        ),
-    }
-}
-
 logger = logging.getLogger(__name__)
 
 
@@ -129,7 +118,7 @@ def _try_acquire_lock(name, token, ttl):
     The unique constraint on TaskLock.name is what makes this atomic: two racing
     callers both attempt the insert and the database rejects one of them.
     """
-    now = datetime.utcnow()
+    now = utcnow()
     with SessionLocal() as db:
         # Reclaim a lock whose holder died before releasing it.
         db.execute(sa_delete(TaskLock).where(TaskLock.name == name, TaskLock.expires_at <= now))
@@ -162,7 +151,7 @@ def _renew_lock(name, token, ttl):
         result = db.execute(
             sa_update(TaskLock)
             .where(TaskLock.name == name, TaskLock.token == token)
-            .values(expires_at=datetime.utcnow() + timedelta(seconds=ttl))
+            .values(expires_at=utcnow() + timedelta(seconds=ttl))
         )
         db.commit()
         return result.rowcount > 0
@@ -270,7 +259,7 @@ def booking_in_progress():
         row = db.execute(
             select(TaskLock).where(
                 TaskLock.name == f"gn:lock:{BOOKING_SLOT}",
-                TaskLock.expires_at > datetime.utcnow(),
+                TaskLock.expires_at > utcnow(),
             )
         ).scalars().first()
         return row.acquired_at if row else None
@@ -282,36 +271,6 @@ def busy_notice(seconds_left):
     left = f"{minutes} more min" if minutes else "under a minute"
     return ("Another booking run is in progress. Waiting for it to finish, then this one "
             f"starts automatically — giving up after {left}.")
-
-
-def _session_to_dict(session):
-    return {
-        "session_id": session.s_id,
-        "title": session.title,
-        "school": session.school,
-        "teacher": session.teacher,
-        "teachers": getattr(session, "teachers", []),
-        "teacher_email": getattr(session, "teacher_email", ""),
-        "teacher_emails": getattr(session, "teacher_emails", []),
-        "start_time": session.start_time.isoformat() if session.start_time else None,
-        "length": session.length,
-        "conflict_details": session.conflict_details,
-        "conflict_type": session.conflict_type,
-        "conflict_session_id": getattr(session, "conflict_other_id", None),
-        "conflict_start_iso": session.conflict_start_iso,
-        "conflict_end_iso": session.conflict_end_iso,
-        # Enough about both sides of a clash to write the email to the school.
-        "timezone": getattr(session, "timezone", ""),
-        "created_at": getattr(session, "created_at", ""),
-        "conflict_other_title": getattr(session, "conflict_other_title", None),
-        "conflict_other_teacher": getattr(session, "conflict_other_teacher", None),
-        "conflict_other_teachers": getattr(session, "conflict_other_teachers", []),
-        "conflict_other_teacher_email": getattr(session, "conflict_other_teacher_email", None),
-        "conflict_other_teacher_emails": getattr(session, "conflict_other_teacher_emails", []),
-        "conflict_other_start_iso": getattr(session, "conflict_other_start_iso", None),
-        "conflict_other_created_at": getattr(session, "conflict_other_created_at", None),
-        "conflict_other_ticketed": getattr(session, "conflict_other_ticketed", False),
-    }
 
 
 ZOOM_RESOLUTION_NOTE = ("Class is connecting via Zoom due to another session using the "
@@ -384,9 +343,13 @@ def clear_resolved_conflicts(sessions, resolved_pairs):
     return sessions
 
 
-def _annotate_conflicts(airtable_client, candidate_sessions, user_email,
-                        window_past_days, window_future_days):
-    """Flag each candidate that collides with an existing booking or a submitted ticket."""
+def annotate_conflicts(airtable_client, candidate_sessions, user_email,
+                       window_past_days, window_future_days):
+    """Flag each candidate that collides with an existing booking or a submitted ticket.
+
+    The one implementation: the dashboard and the scheduled run both call this, so
+    what a person sees held back is what the run would hold back.
+    """
     if not candidate_sessions:
         return []
 
@@ -398,7 +361,7 @@ def _annotate_conflicts(airtable_client, candidate_sessions, user_email,
         window_future_days=window_future_days,
     ) if school_names else []
 
-    historical_entries = TicketSubmissionLog().get_entries(user_email)
+    historical_entries = ticket_log.get_entries(user_email)
     annotated = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
     # A clash the person settled on the dashboard must not come back every scan.
     return clear_resolved_conflicts(annotated, resolved_conflict_pairs(user_email))
@@ -460,7 +423,7 @@ def _record_scan(user_email, candidate_sessions, conflict_payload, clean_session
             return
         db.add(ScanResult(
             user_id=user.id,
-            scanned_at=datetime.now(timezone.utc),
+            scanned_at=utcnow(),
             conflicts_json=json.dumps(conflict_payload),
             candidate_ids=json.dumps([s.s_id for s in candidate_sessions]),
             summary=json.dumps({
@@ -499,17 +462,13 @@ def _record_booking_outcome(user_email, successful, failed):
 
 
 def dispatch_scan(user_email):
-    """Queue a scan, or run it here when there is no broker."""
-    if INLINE_TASKS:
-        return scan_user(user_email)
-    return scan_user.delay(user_email)
+    """Run a scan for this user, here, now."""
+    return scan_user(user_email)
 
 
 def dispatch_booking(user_email, session_ids, manual=False):
-    """Queue a booking run, or run it here when there is no broker."""
-    if INLINE_TASKS:
-        return book_sessions(user_email, session_ids, manual)
-    return book_sessions.delay(user_email, session_ids, manual)
+    """Run a booking for this user, here, now."""
+    return book_sessions(user_email, session_ids, manual)
 
 
 def last_scan_at(user_email):
@@ -610,7 +569,7 @@ def outstanding_exclusions(user_email, now=None):
     A session in the past can never be booked again, so listing it would just grow
     the daily email forever.
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
         if not user:
@@ -656,7 +615,7 @@ def user_is_due(user_email, now=None):
     if previous is None:
         return True
 
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     if previous.tzinfo is not None:
         previous = previous.replace(tzinfo=None)
 
@@ -696,7 +655,6 @@ def _scheduled_scan_is_due(previous, now, hours):
     return previous + timedelta(hours=hours + 1) <= now
 
 
-@celery_app.task(name="tasks.run_scheduled_scan")
 def run_scheduled_scan(force=False):
     emails = user_manager.list_auto_enabled_users()
     due = emails if force else [email for email in emails if user_is_due(email)]
@@ -709,13 +667,6 @@ def run_scheduled_scan(force=False):
             logger.error("Scan failed for %s: %s", email, exc, exc_info=True)
 
 
-@celery_app.task(name="tasks.run_hourly_scan")
-def run_hourly_scan():
-    """Deprecated alias kept so tasks queued under the old name still resolve."""
-    return run_scheduled_scan()
-
-
-@celery_app.task(name="tasks.scan_user")
 def scan_user(user_email):
     with _user_lock(f"scan:{user_email}", SCAN_LOCK_TTL) as acquired:
         if not acquired:
@@ -743,7 +694,7 @@ def _scan_user(user_email):
         window_past_days=window_past_days,
         window_future_days=window_future_days,
     )
-    candidate_sessions = _annotate_conflicts(
+    candidate_sessions = annotate_conflicts(
         airtable_client, candidate_sessions, user_email, window_past_days, window_future_days
     )
 
@@ -754,12 +705,12 @@ def _scan_user(user_email):
     conflicts = [s for s in candidate_sessions if s.is_conflict and s.s_id not in excluded]
     clean = [s for s in candidate_sessions
              if not s.is_conflict and s.s_id not in excluded]
-    conflict_payload = [_session_to_dict(s) for s in conflicts]
+    conflicts_out = [conflict_payload(s) for s in conflicts]
 
     logger.info("Scan for %s: %d candidate(s), %d clean, %d conflicted.",
                 user_email, len(candidate_sessions), len(clean), len(conflicts))
 
-    _record_scan(user_email, candidate_sessions, conflict_payload, clean)
+    _record_scan(user_email, candidate_sessions, conflicts_out, clean)
     # A pending request means a person pressed "Book now" and is waiting on an email.
     # Read it before clearing, since clearing is what marks the request as served.
     manual = has_pending_request(user_email)
@@ -767,9 +718,9 @@ def _scan_user(user_email):
     clear_scan_request(user_email)
 
     # Conflicts are reported but never block the sessions that are fine.
-    if conflict_payload:
+    if conflicts_out:
         try:
-            _email_new_conflicts(user_email, conflict_payload)
+            _email_new_conflicts(user_email, conflicts_out)
         except Exception as exc:
             logger.error("Could not send conflict email to %s: %s", user_email, exc)
 
@@ -779,18 +730,56 @@ def _scan_user(user_email):
         # Nothing to book, but the button promised an email either way.
         try:
             send_booking_summary_email(user_manager.notification_email(user_email), [], [],
-                                       conflict_sessions=conflict_payload, manual=True)
+                                       conflict_sessions=conflicts_out, manual=True)
         except Exception as exc:
             logger.error("Could not send booking summary to %s: %s", user_email, exc)
 
 
-@celery_app.task(name="tasks.book_sessions")
 def book_sessions(user_email, session_ids, manual=False):
     with _user_lock(f"book:{user_email}", BOOK_LOCK_TTL) as acquired:
         if not acquired:
             logger.info("Booking for %s already running; skipping this batch.", user_email)
             return
         _book_sessions(user_email, session_ids, manual=manual)
+
+
+def submit_to_gn(user_email, profile, sessions, progress_session_id=None, headless_mode=True,
+                 allow_manual_site_selection=False, on_wait=None):
+    """Drive the browser for these sessions and record what came back.
+
+    The one place a booking actually happens, whether the scheduled run or the
+    dashboard's button asked for it. Takes the single browser slot for exactly as
+    long as Chrome runs, logs every submitted ticket, and folds the outcome into
+    the latest scan so the dashboard can show it.
+
+    Returns (successful, failed), or None when the slot never came free, in which
+    case nothing was touched and the sessions stay unbooked in Airtable.
+    """
+    prefs = profile.get("preferences", {})
+    with booking_slot(on_wait=on_wait) as slot:
+        if not slot:
+            return None
+        results = gn_ticket.gn_ticket_handler(
+            sessions,
+            user_email,
+            profile.get("servicenow_password"),
+            ZOOM_ACCOUNT,
+            progress_session_id,
+            profile.get("airtable_api_key"),
+            profile.get("totp_secret"),
+            headless_mode=headless_mode,
+            allow_manual_site_selection=allow_manual_site_selection,
+            chatgpt_api_key=os.getenv("CHATGPT_API_KEY"),
+            buffer_before=prefs.get("buffer_before", 10),
+            buffer_after=prefs.get("buffer_after", 10),
+        )
+
+    successful = results.get("successful_sessions", [])
+    failed = results.get("failed_sessions", [])
+    ticket_log.add_successful_submissions(user_email, successful)
+    _record_booking_outcome(user_email, successful, failed)
+    logger.info("Booking for %s: %d succeeded, %d failed.", user_email, len(successful), len(failed))
+    return successful, failed
 
 
 def _book_sessions(user_email, session_ids, manual=False):
@@ -805,8 +794,6 @@ def _book_sessions(user_email, session_ids, manual=False):
     prefs = profile.get("preferences", {})
     window_past_days = prefs.get("window_past_days", 14)
     window_future_days = prefs.get("window_future_days", 90)
-    buffer_before = prefs.get("buffer_before", 10)
-    buffer_after = prefs.get("buffer_after", 10)
 
     airtable_client = create_airtable_client(profile["airtable_api_key"])
     candidate_sessions = airtable_client.get_booked_sessions(
@@ -815,7 +802,7 @@ def _book_sessions(user_email, session_ids, manual=False):
         window_future_days=window_future_days,
     )
     # Re-check: a conflict may have appeared between the scan and now.
-    candidate_sessions = _annotate_conflicts(
+    candidate_sessions = annotate_conflicts(
         airtable_client, candidate_sessions, user_email, window_past_days, window_future_days
     )
 
@@ -824,7 +811,7 @@ def _book_sessions(user_email, session_ids, manual=False):
     excluded = excluded_session_ids(user_email)
     requested = {sid for sid in session_ids if sid not in excluded}
     send_to_gn = [s for s in candidate_sessions if s.s_id in requested and not s.is_conflict]
-    conflicted = [_session_to_dict(s) for s in candidate_sessions
+    conflicted = [conflict_payload(s) for s in candidate_sessions
                   if s.is_conflict and s.s_id not in excluded]
 
     def report(successful=None, failed=None):
@@ -871,54 +858,30 @@ def _book_sessions(user_email, session_ids, manual=False):
         report()
         return {"dry_run": True, "would_book": [s.s_id for s in send_to_gn]}
 
-    gn_ticket.set_progress_callback(lambda *args, **kwargs: None)
-
-    # Take the browser slot only now: the Airtable reads and conflict re-check above
-    # do not need it, and holding it for them would make everyone else wait longer.
     def announce(seconds_left):
         logger.info("%s (%s)", busy_notice(seconds_left), user_email)
 
-    with booking_slot(on_wait=announce) as slot:
-        if not slot:
-            logger.warning(
-                "Browser slot still busy after %d min for %s. Leaving these %d session(s) "
-                "for the next run — nothing is lost, they stay unbooked in Airtable.",
-                BUSY_MAX_WAIT_SECONDS // 60, user_email, len(send_to_gn),
-            )
-            report(failed=[{"title": f"{len(send_to_gn)} session(s)",
-                            "error": "The browser was still busy after a long wait. Nothing "
-                                     "was booked; the next run picks these up."}])
-            return
+    try:
+        outcome = submit_to_gn(user_email, profile, send_to_gn, on_wait=announce)
+    except Exception as exc:
+        # Someone is waiting on an email for this run; a silent crash looks
+        # identical to a run that is still going.
+        logger.error("Booking run failed for %s: %s", user_email, exc, exc_info=True)
+        report(failed=[{"title": f"{len(send_to_gn)} session(s)", "error": str(exc)}])
+        raise
 
-        try:
-            booking_results = gn_ticket.gn_ticket_handler(
-                send_to_gn,
-                user_email,
-                profile.get("servicenow_password"),
-                "connectednorth@takingitglobal.org",
-                None,
-                profile.get("airtable_api_key"),
-                profile.get("totp_secret"),
-                headless_mode=True,
-                allow_manual_site_selection=False,
-                chatgpt_api_key=os.getenv("CHATGPT_API_KEY"),
-                buffer_before=buffer_before,
-                buffer_after=buffer_after,
-            )
-        except Exception as exc:
-            # Someone is waiting on an email for this run; a silent crash looks
-            # identical to a run that is still going.
-            logger.error("Booking run failed for %s: %s", user_email, exc, exc_info=True)
-            report(failed=[{"title": f"{len(send_to_gn)} session(s)", "error": str(exc)}])
-            raise
+    if outcome is None:
+        logger.warning(
+            "Browser slot still busy after %d min for %s. Leaving these %d session(s) "
+            "for the next run — nothing is lost, they stay unbooked in Airtable.",
+            BUSY_MAX_WAIT_SECONDS // 60, user_email, len(send_to_gn),
+        )
+        report(failed=[{"title": f"{len(send_to_gn)} session(s)",
+                        "error": "The browser was still busy after a long wait. Nothing "
+                                 "was booked; the next run picks these up."}])
+        return
 
-    successful = booking_results.get("successful_sessions", [])
-    failed = booking_results.get("failed_sessions", [])
-
-    TicketSubmissionLog().add_successful_submissions(user_email, successful)
-    _record_booking_outcome(user_email, successful, failed)
-
-    logger.info("Booking for %s: %d succeeded, %d failed.", user_email, len(successful), len(failed))
+    successful, failed = outcome
     report(successful=successful, failed=failed)
 
 

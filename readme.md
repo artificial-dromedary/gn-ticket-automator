@@ -1,253 +1,120 @@
-# GN Ticket Automator - Simplified Edition
+# GN Ticket Automator
 
-Automate Government of Nunavut ticket submission with **one-click Google login** and **guided setup wizard**.
+Files Government of Nunavut videoconference tickets for Connected North sessions,
+so nobody has to type them into ServiceNow by hand. It reads booked sessions from
+Airtable, checks each one for clashes, submits a ticket through the ServiceNow
+portal with a browser, and writes the ticket number back to Airtable.
 
-## 🚀 For Users (Simple!)
+Two things run:
 
-### **What You Need:**
-- TakingITGlobal Google account
-- Airtable API key
-- ServiceNow password and 2FA secret
+- **The web app** (`main.py`). Sign in with a TakingITGlobal Google account, save
+  your Airtable key and ServiceNow credentials once, then see your upcoming
+  sessions, what will be booked, and what is being held back and why.
+- **The scheduled scan** (`run_scan.py`). An hourly cron job that scans everyone
+  who opted in, books the conflict-free sessions, emails about conflicts, and
+  sends an end-of-day summary.
 
-### **How to Use:**
-1. **Download and run** the app
-2. **Click "Sign in with Google"** - works immediately!
-3. **Follow the 3-step setup wizard**:
-   - Step 1: Get Airtable API key (guided with "Open Airtable" button)
-   - Step 2: Enter ServiceNow password
-   - Step 3: Set up 2FA secret (guided with step-by-step instructions)
-4. **Start automating!** - Select sessions and click "Book Selected Sessions"
+Both run on Render from the same Docker image; see `render.yaml`, which is also
+where every environment variable is documented.
 
-### **That's it!** No technical setup required for users.
+The macOS desktop app that preceded this is no longer maintained. Its source is
+at the git tag `desktop-app-final`. People still on it can bring their saved
+setup across with the "Bring your settings across" link on the setup page.
 
----
+## Running it locally
 
-## 🔧 For Administrators (One-Time Setup)
+```sh
+python -m venv venv && source venv/bin/activate
+pip install -r requirements-dev.txt
 
-### **Before Distribution:**
+# .env, or exported:
+export APP_ENCRYPTION_KEY=$(python -c 'import secrets; print(secrets.token_hex(16))')
+export GOOGLE_CLIENT_ID=...          # from the Google Cloud OAuth client
+export GOOGLE_CLIENT_SECRET=...
+export OAUTH_REDIRECT_URI=http://127.0.0.1:5001/oauth/callback
+export DATABASE_URL=sqlite:///gn_ticket.db   # the default; Postgres in production
 
-**1. Configure Google OAuth (15 minutes):**
-- Create Google Cloud project
-- Set up OAuth credentials
-- Edit `main.py` with your credentials:
-  ```python
-  GOOGLE_CLIENT_ID = "your_actual_client_id"
-  GOOGLE_CLIENT_SECRET = "your_actual_client_secret"
-  ```
-
-**2. Customize Settings (optional):**
-- Update allowed email domains in `ALLOWED_DOMAINS`
-- Change redirect URI for production deployment
-
-**3. Test and Distribute:**
-- Test with a few users first
-- Package as Mac app (instructions below)
-- Distribute to team
-
-### **Detailed Admin Setup:**
-
-#### **Step 1: Google Cloud Setup**
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create new project: "GN Ticket Automator"
-3. Enable APIs:
-   - Go to "APIs & Services" → "Library"
-   - Enable "Google+ API"
-4. Create OAuth credentials:
-   - Go to "APIs & Services" → "Credentials"
-   - Click "Create Credentials" → "OAuth client ID"
-   - Choose "Web application"
-   - Add redirect URI: `http://localhost:5000/oauth/callback`
-   - Copy Client ID and Client Secret
-
-#### **Step 2: Configure OAuth Consent Screen**
-1. Go to "APIs & Services" → "OAuth consent screen"
-2. Choose "Internal" (for organization use)
-3. Fill in:
-   - App name: "GN Ticket Automator"
-   - User support email: Your admin email
-   - Authorized domains: `takingitglobal.org`
-4. Add scopes: email, profile, openid
-
-#### **Step 3: Update Application Code**
-Edit `main.py` and replace these lines:
-```python
-# Change these:
-GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE"
-GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET_HERE"
-
-# To your actual credentials:
-GOOGLE_CLIENT_ID = "1234567890-abcdef.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "GOCSPX-your_actual_secret_here"
+python main.py                       # http://127.0.0.1:5001
 ```
 
-#### **Step 4: Test Configuration**
-```bash
-python main.py
-```
-- Visit http://localhost:5000
-- Test Google login with a @takingitglobal.org account
-- Complete the setup wizard to verify everything works
+The scan, without a browser and without submitting anything:
 
----
-
-## 📦 Installation & Dependencies
-
-### **For Development/Testing:**
-```bash
-# Clone and setup
-git clone <repository>
-cd gn-ticket-automator
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure OAuth (see admin section above)
-# Edit main.py with your Google OAuth credentials
-
-# Run
-python main.py
+```sh
+python run_scan.py --dry-run --force          # everyone opted in, ignore intervals
+python run_scan.py --user someone@takingitglobal.org --dry-run
+python run_scan.py --list-users
+python run_scan.py --daily-summary            # send the summary now
 ```
 
-### **Dependencies:**
-- Flask (web interface)
-- Google OAuth libraries
-- Selenium (browser automation)
-- Cryptography (secure credential storage)
-- Airtable integration libraries
+Chrome and chromedriver are needed for a real booking. Point `CHROME_BINARY` and
+`CHROMEDRIVER` at them if they are not on the default path; the Dockerfile shows
+what the hosted image installs.
 
----
+## Tests and checks
 
-## ✨ Features
-
-### **User Experience:**
-- **One-click Google login** - no technical setup for users
-- **Guided setup wizard** with step-by-step instructions
-- **"Open in New Tab" buttons** for easy credential gathering
-- **Real-time progress tracking** during automation
-- **Encrypted credential storage** on user's computer
-
-### **Security:**
-- Domain-restricted access (@takingitglobal.org only)
-- Local credential encryption using macOS Keychain
-- Session-based authentication
-- Secure API key storage
-
-### **Automation Features:**
-- Automatic ServiceNow login with 2FA
-- Form auto-filling from Airtable data
-- Zoom meeting verification
-- Progress tracking with detailed logging
-- Error handling with user-friendly messages
-
----
-
-## 🔒 Security & Privacy
-
-### **Data Storage:**
-- **Local only** - credentials stored on user's computer
-- **Encrypted** - all sensitive data encrypted with unique keys
-- **No cloud storage** - no external credential storage
-
-### **Access Control:**
-- **Domain restriction** - only @takingitglobal.org emails allowed
-- **Admin-controlled** - OAuth app managed centrally
-- **Session-based** - secure login sessions
-
-### **Network Security:**
-- **HTTPS ready** - for production deployment
-- **Minimal data transfer** - only necessary API calls
-- **No credential transmission** - stored locally only
-
----
-
-## 🐛 Troubleshooting
-
-### **For Users:**
-
-**"Access Denied" when logging in:**
-- Make sure you're using your @takingitglobal.org email
-- Try a different Google account
-- Contact your administrator
-
-**"Profile Error" when loading sessions:**
-- Check your Airtable API key is correct
-- Verify you have access to the Sessions table
-- Try refreshing the page
-
-**Automation fails:**
-- Verify ServiceNow password is correct
-- Check 2FA secret is properly configured
-- Ensure sessions have Zoom links in Airtable
-
-### **For Administrators:**
-
-**OAuth not working:**
-- Verify Client ID and Secret are correct
-- Check redirect URI matches exactly
-- Ensure OAuth consent screen is configured
-
-**Users can't access:**
-- Check their email domain is in `ALLOWED_DOMAINS`
-- Verify OAuth consent screen allows their emails
-- Test with your own account first
-
----
-
-## 📞 Support
-
-**For Users:**
-- Contact your administrator for access issues
-- Use the built-in troubleshooting guides in error pages
-- Check the "Profile Error" page for Airtable connection issues
-
-**For Administrators:**
-- Review Google Cloud Console setup
-- Check application logs for detailed error information
-- Verify all OAuth configuration steps are complete
-
----
-
-## 🔄 Updates & Maintenance
-
-### **Updating the Application:**
-1. **Backup user data** (user_profiles.db)
-2. **Update code** with new version
-3. **Test with admin account** first
-4. **Distribute updated version** to users
-
-### **Adding New Users:**
-- No technical setup needed - just add their email to OAuth consent screen
-- Users complete their own setup through the guided wizard
-
-### **Monitoring:**
-- Check application logs for errors
-- Monitor OAuth usage in Google Cloud Console
-- Review user feedback for UX improvements
-
----
-
-## 📋 Project Structure
-
-```
-gn-ticket-automator/
-├── main.py                 # Main Flask app with simplified OAuth
-├── user_profiles.py        # Encrypted user profile management
-├── airtable_integration.py # Airtable API client
-├── gn_ticket.py           # Selenium automation
-├── requirements.txt       # Dependencies
-├── templates/             # HTML templates
-│   ├── home.html         # Landing page with Google login
-│   ├── setup_profile.html # Guided setup wizard
-│   ├── gn.html           # Main automation interface
-│   ├── progress.html     # Real-time progress tracking
-│   └── error pages...    # User-friendly error handling
-└── static/               # CSS and images
+```sh
+python -m pytest -q
+ruff check .
 ```
 
----
+CI runs both on every push and pull request. Tests use a scratch SQLite file and
+a throwaway encryption key, and never reach Airtable, ServiceNow, Google or an
+SMTP relay: each is faked at the module boundary.
 
-**Version:** 2.0 - Simplified Google OAuth Edition  
-**License:** Internal use - TakingITGlobal Connected North  
-**Contact:** System Administrator# gn-ticket-automator
+## How a scan works
+
+For each opted-in user whose slot has come round (`tasks.user_is_due`):
+
+1. Read their upcoming Nunavut sessions from Airtable that are booked and not
+   yet ticketed, within their look-ahead window.
+2. Annotate conflicts (`conflict.py`): starting too soon for the GN to act on,
+   overlapping an already-ticketed session at the same school, overlapping a
+   ticket this tool already filed, or two candidates clashing with each other.
+   Clashes the person has settled on the dashboard ("this class joins by Zoom")
+   are cleared; sessions they removed are held back.
+3. Record the scan, email any conflicts not already reported, and book the rest.
+
+Booking (`tasks.submit_to_gn`) takes the single browser slot, a database-backed
+lock shared by every process, logs in to ServiceNow with the user's password and
+TOTP secret, fills the request form for each session, and records the ticket
+number in Airtable and in the local ticket history. The web app's "Book selected
+sessions" button goes through the same function where in-process booking is
+enabled (`GN_ENABLE_MANUAL_BOOKING`); on the hosted service it is off and "Run
+scan now" starts the cron job instead.
+
+## Layout
+
+```
+main.py                  Flask app: sign-in, dashboard, settings, manual booking
+run_scan.py              Cron job entrypoint
+tasks.py                 Scan, conflict handling, booking, locks, daily summary
+conflict.py              Conflict detection between sessions
+gn_ticket.py             Selenium automation of the ServiceNow form
+airtable_integration.py  Airtable client (retries, timeouts, formula quoting)
+emailer.py               Every email, and the display-timezone formatting
+models.py / db.py        SQLAlchemy models, engine, and init_db()
+user_profiles.py         Encrypted credentials and per-user preferences
+desktop_import.py        Importing a profile from the old desktop app's database
+render_api.py            "Run scan now" on the hosted service
+site_list.py             Fallback list of ServiceNow site names
+templates/, static/      The pages
+tests/                   pytest suite
+```
+
+## Conventions worth knowing
+
+- **Timestamps in the database are naive UTC**, written with `models.utcnow()`.
+  Anything shown to a person goes through `emailer.friendly_datetime`, which
+  renders in `DISPLAY_TZ`. Session times from Airtable are aware datetimes.
+- **The schema is brought up to date by `db.init_db()`**, called once at startup
+  by `main.py` and `run_scan.py`. Nothing touches the database on import.
+- **Every Airtable call goes through `AirtableIntegration`**, which retries the
+  transient failures and quotes values into formulas. Do not call `requests`
+  against Airtable directly.
+- **Credentials are Fernet-encrypted** with `APP_ENCRYPTION_KEY`. Rotating that
+  key means every user re-enters their setup.
+- **There are no CSRF tokens.** The session cookie is SameSite=Lax and every
+  state-changing request is checked against the `Sec-Fetch-Site` and `Origin`
+  headers; see `refuse_cross_site_writes` in `main.py`.
+- **Dependencies are pinned in `requirements.lock`**, which the image installs.
+  Edit `requirements.txt` and regenerate the lock as its header describes.

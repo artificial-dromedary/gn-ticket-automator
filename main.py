@@ -1,138 +1,52 @@
-from flask import Flask, session, Response, jsonify, redirect, url_for
-from flask import render_template
-from flask import request
+"""The web app: sign-in, the dashboard, and the settings behind it.
+
+Booking itself lives in tasks.py and normally runs in the hourly cron job. This
+process only drives a browser where GN_ENABLE_MANUAL_BOOKING says it has the
+memory to.
+"""
 import json
-import time
-import threading 
-from datetime import datetime, timedelta, timezone
-import os
-from dotenv import load_dotenv
-import secrets
-import sys
-from pathlib import Path
 import logging
+import os
+import secrets
+import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
+
 import jwt
-import uuid
-from sqlalchemy import select
-
-RUN_ID = uuid.uuid4().hex
-
-# Optional environment diagnostics, enabled via ENABLE_ENV_DIAGNOSTICS
-if os.environ.get("ENABLE_ENV_DIAGNOSTICS", "").lower() in ("1", "true", "yes"):
-    import google_auth_oauthlib
-    import inspect
-
-    print("--- PYTHON ENVIRONMENT DIAGNOSTICS ---")
-    try:
-        version = getattr(google_auth_oauthlib, "__version__", "Version not available")
-        print(f"google_auth_oauthlib version: {version}")
-        print(f"Module loaded from: {google_auth_oauthlib.__file__}")
-        print(f"Flow module location: {inspect.getfile(google_auth_oauthlib.flow)}")
-        print(
-            f"Available attributes: {[attr for attr in dir(google_auth_oauthlib) if not attr.startswith('_')]}")
-    except Exception as e:
-        print(f"Could not print diagnostics, error: {e}")
-    print("--------------------------------------")
-
-
-def load_env_file():
-    """Load .env file from the appropriate location for both development and bundled app"""
-    if getattr(sys, 'frozen', False):
-        # Running as bundled app - check bundle first, then user directory
-        possible_locations = [
-            Path(sys._MEIPASS) / '.env' if hasattr(sys, '_MEIPASS') else None,
-            Path(os.path.dirname(sys.executable)) / '.env',
-            Path.home() / 'GN_Ticket_Automator' / '.env',
-        ]
-
-        for env_path in possible_locations:
-            if env_path and env_path.exists():
-                load_dotenv(env_path)
-                return True
-        return False
-    else:
-        load_dotenv()
-        return True
-
-
-env_loaded = load_env_file()
-
-
-def get_app_data_dir():
-    """Get the application data directory for user data"""
-    app_dir = Path.home() / 'GN_Ticket_Automator' if getattr(sys, 'frozen', False) else Path(__file__).parent
-    app_dir.mkdir(exist_ok=True)
-    return app_dir
-
-
-# Configure paths for bundled app
-template_dir, static_dir = None, None
-if getattr(sys, 'frozen', False):
-    base_path = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else Path(os.path.dirname(sys.executable))
-    resources_path = base_path.parent / 'Resources'  # macOS app bundle structure
-
-    # Check MEIPASS/executable path first, then Resources path
-    t_dir = base_path / 'templates'
-    s_dir = base_path / 'static'
-
-    if t_dir.exists():
-        template_dir = str(t_dir)
-    elif (resources_path / 'templates').exists():
-        template_dir = str(resources_path / 'templates')
-
-    if s_dir.exists():
-        static_dir = str(s_dir)
-    elif (resources_path / 'static').exists():
-        static_dir = str(resources_path / 'static')
-
-# Create Flask app with proper directories
-if template_dir and static_dir:
-    app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
-    logging.info(f"✅ Flask app created with custom template/static directories")
-else:
-    app = Flask(__name__)
-    logging.warning(f"⚠️ Flask app created with default directories")
-
-# Allow insecure transport for development (localhost only)
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-
+from dotenv import load_dotenv
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for
 from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
-import gn_ticket
-from user_profiles import user_manager
-from desktop_import import (MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, DesktopImportError,
-                            import_desktop_files)
-from airtable_integration import create_airtable_client
-from updater import AppUpdater, APP_VERSION
-from ticket_submission_log import TicketSubmissionLog
 from google_auth_oauthlib.flow import Flow
-from collections import deque
-from conflict import check_for_time_conflicts
-from emailer import (DISPLAY_TZ, friendly_datetime, send_booking_summary_email,
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+from db import DATABASE_URL, SessionLocal, init_db  # noqa: E402
+from desktop_import import (MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, DesktopImportError,  # noqa: E402
+                            import_desktop_files)
+from airtable_integration import create_airtable_client  # noqa: E402
+from emailer import (DISPLAY_TZ, friendly_datetime, send_booking_summary_email,  # noqa: E402
                      teacher_conflict_email, teacher_conflict_recipients,
                      teacher_conflict_subject)
-from db import DATABASE_URL, SessionLocal
-from models import ScanResult, User, ConflictEmailLog
-import tasks
-from tasks import auto_scan_time_label, booking_in_progress, booking_slot, busy_notice, dispatch_scan
-from user_profiles import (LOOKAHEAD_FOREVER_DAYS, LOOKAHEAD_STOPS, SCAN_FREQUENCY_CHOICES,
-                           normalize_lookahead, normalize_scan_frequency)
-import render_api
+from models import ScanResult, User, ConflictEmailLog  # noqa: E402
+import gn_ticket  # noqa: E402
+import render_api  # noqa: E402
+import tasks  # noqa: E402
+from tasks import auto_scan_time_label, booking_in_progress, busy_notice, dispatch_scan  # noqa: E402
+from ticket_submission_log import ticket_log  # noqa: E402
+from user_profiles import (LOOKAHEAD_FOREVER_DAYS, LOOKAHEAD_STOPS, SCAN_FREQUENCY_CHOICES,  # noqa: E402
+                           normalize_lookahead, normalize_scan_frequency, user_manager)
 
-# Global progress storage. Each session keeps a deque of the most recent entries
-# (up to 50) along with a monotonically increasing sequence counter.
-progress_store = {}
-progress_counters = {}
-progress_lock = threading.Lock()
+init_db()
 
-# Simple global progress tracking for the updater
-update_progress = {
-    'progress': 0,
-    'message': 'Not started',
-    'complete': False,
-    'error': None
-}
-update_progress_lock = threading.Lock()
+app = Flask(__name__)
 
 
 def load_config_from_env():
@@ -142,21 +56,27 @@ def load_config_from_env():
         'OAUTH_REDIRECT_URI': os.getenv('OAUTH_REDIRECT_URI', 'http://127.0.0.1:5000/oauth/callback'),
         'ALLOWED_DOMAINS': os.getenv('ALLOWED_DOMAINS', 'takingitglobal.org').split(','),
         'SECRET_KEY': os.getenv('SECRET_KEY'),
-        'CHATGPT_API_KEY': os.getenv('CHATGPT_API_KEY')
     }
     is_valid = bool(config['GOOGLE_CLIENT_ID'] and config['GOOGLE_CLIENT_SECRET'])
     if not is_valid:
-        logging.error("Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET environment variable.")
-        print(f"*** DEBUG: Loaded CONFIG = {config}")
+        # Names only. The values are secrets and this goes to the log.
+        logging.error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set; sign-in is off.")
     return config, is_valid
 
 
-if not env_loaded:
-    logging.error("Failed to load .env file. Please ensure it exists and is accessible.")
+CONFIG, CONFIG_VALID = load_config_from_env()
+
+# The Google OAuth project is an unpublished internal one and the callback may be
+# plain http in development, so oauthlib's https check is relaxed on purpose.
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
+# Manual booking drives Chrome inside this process, which a small hosted instance
+# cannot survive. Off there; on where the process has a machine's worth of memory.
+MANUAL_BOOKING_ENABLED = os.getenv("GN_ENABLE_MANUAL_BOOKING", "true").strip().lower() in ("1", "true", "yes")
 
 # Session configuration. Sessions live in the database, not on disk: the container
 # filesystem is ephemeral, so a filesystem store signs everyone out on every deploy.
-app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     # This engine only carries session reads and writes; db.py has its own pool for
@@ -172,6 +92,13 @@ app.config['SESSION_SQLALCHEMY'] = SQLAlchemy(app)
 app.config['SESSION_SQLALCHEMY_TABLE'] = 'flask_sessions'
 # SQL has no TTL, so expired rows are pruned on roughly every Nth request.
 app.config['SESSION_CLEANUP_N_REQUESTS'] = 200
+# The cookie: never readable from script, never sent on a cross-site request, and
+# only over https wherever the sign-in callback itself is https.
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.getenv(
+    'SESSION_COOKIE_SECURE', str(CONFIG['OAUTH_REDIRECT_URI'].startswith('https://'))
+).strip().lower() in ('1', 'true', 'yes')
 Session(app)
 
 app.jinja_env.filters['friendly_datetime'] = friendly_datetime
@@ -182,6 +109,97 @@ app.jinja_env.globals['display_timezone'] = DISPLAY_TZ
 app.jinja_env.globals['teacher_conflict_email'] = teacher_conflict_email
 app.jinja_env.globals['teacher_conflict_subject'] = teacher_conflict_subject
 app.jinja_env.globals['teacher_conflict_recipients'] = teacher_conflict_recipients
+
+
+@app.before_request
+def refuse_cross_site_writes():
+    """Every state-changing request must come from this site's own pages.
+
+    There are no per-form CSRF tokens. Instead, the SameSite cookie above keeps the
+    session out of cross-site requests, and this checks the headers every current
+    browser sends so a forged POST from elsewhere is refused outright. A request
+    with neither header (a non-browser client, the test client) is let through.
+    """
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return None
+    fetch_site = request.headers.get('Sec-Fetch-Site')
+    if fetch_site and fetch_site not in ('same-origin', 'none'):
+        abort(403)
+    origin = request.headers.get('Origin')
+    if origin and urlparse(origin).netloc != request.host:
+        abort(403)
+    return None
+
+
+# --- Booking progress -------------------------------------------------------
+#
+# Each manual booking run keeps a deque of its most recent progress entries, in
+# this process. That is fine for the one-worker deployment this runs as; a second
+# worker would not see the first one's runs.
+PROGRESS_KEEP_SECONDS = int(os.getenv("GN_PROGRESS_KEEP_SECONDS", str(6 * 60 * 60)))
+progress_store = {}      # session_id -> deque of entries
+progress_owners = {}     # session_id -> (owner email, started at)
+progress_counters = {}
+progress_lock = threading.Lock()
+
+
+def _forget_stale_progress():
+    cutoff = time.monotonic() - PROGRESS_KEEP_SECONDS
+    for session_id, (_, started) in list(progress_owners.items()):
+        if started < cutoff:
+            progress_store.pop(session_id, None)
+            progress_owners.pop(session_id, None)
+            progress_counters.pop(session_id, None)
+
+
+def start_progress(session_id, owner_email):
+    with progress_lock:
+        _forget_stale_progress()
+        progress_store[session_id] = deque(maxlen=200)
+        progress_owners[session_id] = (owner_email, time.monotonic())
+        progress_counters[session_id] = 0
+
+
+def set_progress(session_id, message, step=None, total_steps=None, status="running", session_ref=None):
+    """Record a progress entry for a booking run. A run nobody is watching (the
+    scheduled one passes no id) records nothing."""
+    if not session_id:
+        return
+    with progress_lock:
+        if session_id not in progress_store:
+            return
+        progress_counters[session_id] += 1
+        progress_store[session_id].append({
+            'seq': progress_counters[session_id],
+            'timestamp': datetime.now(ZoneInfo(DISPLAY_TZ)).strftime('%H:%M:%S'),
+            'message': message,
+            'step': step,
+            'total_steps': total_steps,
+            'status': status,
+            'session_ref': session_ref,
+        })
+
+
+def get_progress(session_id, owner_email):
+    """The entries for a run, or None when it is not this person's run."""
+    with progress_lock:
+        owner = progress_owners.get(session_id)
+        if not owner or owner[0] != owner_email:
+            return None
+        return list(progress_store.get(session_id, deque()))
+
+
+def require_auth(f):
+    """Decorator to require authentication"""
+    from functools import wraps
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+
+    return decorated_function
 
 
 def notify_booking_finished(user_email, successful, failed, conflicts=None):
@@ -196,23 +214,6 @@ def notify_booking_finished(user_email, successful, failed, conflicts=None):
                                    conflict_sessions=conflicts, manual=True)
     except Exception as exc:
         logging.error("Could not send booking summary to %s: %s", user_email, exc)
-
-CONFIG, CONFIG_VALID = load_config_from_env()
-
-# Manual booking drives Chrome inside this process, which a small hosted instance
-# cannot survive. Off there, on everywhere else — the desktop build has the whole
-# machine's memory and is where manual booking belongs.
-MANUAL_BOOKING_ENABLED = os.getenv("GN_ENABLE_MANUAL_BOOKING", "true").strip().lower() in ("1", "true", "yes")
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-
-ticket_log = TicketSubmissionLog(retention_days=30)
-
-def get_redirect_uri_for_flow():
-    """Determine the redirect URI to use for the OAuth flow, prioritizing the configured Flask route."""
-    return CONFIG['OAUTH_REDIRECT_URI']
 
 
 def create_flow():
@@ -236,48 +237,8 @@ def create_flow():
         scopes=['openid', 'https://www.googleapis.com/auth/userinfo.email',
                 'https://www.googleapis.com/auth/userinfo.profile']
     )
+    flow.redirect_uri = CONFIG['OAUTH_REDIRECT_URI']
     return flow
-
-
-def set_progress(session_id, message, step=None, total_steps=None, status="running", session_ref=None):
-    """Update progress for a specific session"""
-    with progress_lock:
-        if session_id not in progress_store:
-            progress_store[session_id] = deque(maxlen=200)
-            progress_counters[session_id] = 0
-        progress_counters[session_id] += 1
-        progress_store[session_id].append({
-            'seq': progress_counters[session_id],
-            'timestamp': datetime.now().strftime('%H:%M:%S'),
-            'message': message,
-            'step': step,
-            'total_steps': total_steps,
-            'status': status,
-            'session_ref': session_ref,
-        })
-
-
-def get_progress(session_id):
-    with progress_lock:
-        return list(progress_store.get(session_id, deque()))
-
-
-def clear_progress(session_id):
-    with progress_lock:
-        progress_store.pop(session_id, None)
-        progress_counters.pop(session_id, None)
-
-
-def require_auth(f):
-    """Decorator to require authentication"""
-
-    def decorated_function(*args, **kwargs):
-        if 'user' not in session:
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-
-    decorated_function.__name__ = f.__name__
-    return decorated_function
 
 
 # --- Routes ---
@@ -292,9 +253,7 @@ def login():
     if not flow:
         return render_template("oauth_not_configured.html")
 
-    # Generate authorization URL and show it to user
     try:
-        flow.redirect_uri = get_redirect_uri_for_flow()
         auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
         session['oauth_state'] = state
         # google-auth-oauthlib generates a PKCE verifier inside authorization_url() and
@@ -302,9 +261,7 @@ def login():
         # verifier has to travel through the session or Google rejects the exchange with
         # "Missing code verifier".
         session['oauth_code_verifier'] = flow.code_verifier
-
-        return render_template("manual_oauth.html", auth_url=auth_url)
-
+        return redirect(auth_url)
     except Exception as e:
         logging.error(f"OAuth setup error: {e}", exc_info=True)
         return redirect(url_for('login_error'))
@@ -317,8 +274,6 @@ def oauth_callback():
         logging.error("OAuth callback missing authorization code")
         return redirect(url_for('login_error'))
 
-    logging.info("OAuth callback received with code.")
-
     # Guards against a callback being replayed from somewhere else. A mismatch here
     # usually means the login URL was opened in a different browser than it was
     # generated in, which cannot work: the PKCE verifier lives in that browser's session.
@@ -327,12 +282,10 @@ def oauth_callback():
         logging.error("OAuth state mismatch — open the login link in the browser that generated it.")
         return redirect(url_for('login_error'))
 
-    # Create a new flow for the callback
     flow = create_flow()
     if not flow:
         return render_template("oauth_not_configured.html")
 
-    flow.redirect_uri = get_redirect_uri_for_flow()
     # Restore the PKCE verifier this browser started the flow with (see /login).
     flow.code_verifier = session.get('oauth_code_verifier')
 
@@ -342,6 +295,8 @@ def oauth_callback():
         session.pop('oauth_state', None)
         session.pop('oauth_code_verifier', None)
 
+        # The id_token arrived over TLS straight from Google's token endpoint in
+        # exchange for our client secret, so its signature is not re-verified here.
         token_payload = jwt.decode(flow.credentials.id_token, options={"verify_signature": False})
         user_info = {
             'email': token_payload.get('email'),
@@ -360,8 +315,7 @@ def oauth_callback():
 
         if user_manager.is_profile_complete(user_info['email']) is False:
             return redirect(url_for('setup_profile'))
-        else:
-            return redirect(url_for('gn_ticket_page'))
+        return redirect(url_for('gn_ticket_page'))
 
     except Exception as e:
         logging.error(f"OAuth callback error: {e}", exc_info=True)
@@ -379,6 +333,28 @@ def login_error():
     return render_template("login_error.html")
 
 
+def _latest_scan(db_user, db):
+    """The most recent scan's conflicts and summary, for the dashboard."""
+    scan = db.execute(
+        select(ScanResult)
+        .where(ScanResult.user_id == db_user.id)
+        .order_by(ScanResult.scanned_at.desc())
+    ).scalars().first()
+    if not scan:
+        return [], None
+
+    try:
+        conflicts = json.loads(scan.conflicts_json) if scan.conflicts_json else []
+    except (TypeError, json.JSONDecodeError):
+        conflicts = []
+    try:
+        summary = json.loads(scan.summary) if scan.summary else {}
+    except (TypeError, json.JSONDecodeError):
+        summary = {}
+    summary['scanned_at'] = scan.scanned_at.isoformat() if scan.scanned_at else None
+    return conflicts, summary
+
+
 @app.route("/gn_ticket", methods=["GET", "POST"])
 @require_auth
 def gn_ticket_page():
@@ -390,32 +366,13 @@ def gn_ticket_page():
     if not profile:
         return redirect(url_for('setup_profile'))
 
-    # --- DECRYPTION FAILURE CHECK ---
+    # Credentials that no longer decrypt (a rotated APP_ENCRYPTION_KEY) come back
+    # as noise; a real Airtable key always starts with "pat".
     airtable_key = profile.get('airtable_api_key', '')
     if airtable_key and not airtable_key.startswith('pat'):
         migration_error = ("Your saved credentials could not be decrypted, likely due to a recent app update. "
                            "Please re-enter them one time to continue.")
         return render_template("setup_profile.html", user=user, profile={}, error=migration_error)
-    # --- END CHECK ---
-
-    if session.get('update_checked') != RUN_ID and not os.environ.get("DISABLE_UPDATES"):
-        session['update_checked'] = RUN_ID
-        try:
-            logging.info("Checking for updates on startup...")
-            update_info = AppUpdater().check_for_updates()
-            if update_info.get('available'):
-                session['update_info'] = update_info
-                session['current_version'] = AppUpdater().current_version
-                return render_template("update.html", update_info=update_info,
-                                       current_version=session['current_version'], user=user, auto_detected=True)
-            else:
-                logging.info("App is up to date.")
-        except Exception as e:
-            logging.error(f"Startup update check failed: {e}", exc_info=True)
-
-    if session.get('update_info') and not session.get('update_dismissed'):
-        return render_template("update.html", update_info=session['update_info'],
-                               current_version=session.get('current_version'), user=user, auto_detected=True)
 
     try:
         prefs = profile.get('preferences', {})
@@ -448,21 +405,10 @@ def gn_ticket_page():
             window_past_days=window_past_days,
             window_future_days=window_future_days,
         )
-
-        # --- CONFLICT DETECTION LOGIC ---
-        if candidate_sessions:
-            school_names = list(set(s.school for s in candidate_sessions if s.school != 'Unknown School'))
-            if school_names:
-                existing_sessions = airtable_client.get_all_sessions_for_schools(
-                    school_names,
-                    status_filters=["Booked"],
-                    window_past_days=window_past_days,
-                    window_future_days=window_future_days,
-                )
-                historical_entries = ticket_log.get_entries(user['email'])
-                candidate_sessions = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
-                candidate_sessions = tasks.clear_resolved_conflicts(
-                    candidate_sessions, tasks.resolved_conflict_pairs(user['email']))
+        # The same check the scheduled run applies, so the page shows what the run
+        # would do.
+        candidate_sessions = tasks.annotate_conflicts(
+            airtable_client, candidate_sessions, user['email'], window_past_days, window_future_days)
 
         submitted_ticket_log = ticket_log.get_entries(user['email'], window_past_days=window_past_days)
         submitted_ticket_log = sorted(submitted_ticket_log, key=lambda entry: entry.get('submitted_at', ''), reverse=True)
@@ -472,36 +418,18 @@ def gn_ticket_page():
 
         session['book_session_ids'] = [s.s_id for s in candidate_sessions]
 
-        latest_conflicts = []
-        latest_scan = None
-        emailed_conflict_ids = set()
+        latest_conflicts, latest_scan, emailed_conflict_ids = [], None, set()
         with SessionLocal() as db:
             db_user = db.execute(
                 select(User).where(User.email == user['email'].strip().lower())
             ).scalar_one_or_none()
             if db_user:
-                scan = db.execute(
-                    select(ScanResult)
-                    .where(ScanResult.user_id == db_user.id)
-                    .order_by(ScanResult.scanned_at.desc())
-                ).scalars().first()
-                if scan and scan.conflicts_json:
-                    try:
-                        latest_conflicts = json.loads(scan.conflicts_json)
-                    except (TypeError, json.JSONDecodeError):
-                        latest_conflicts = []
-                if scan:
-                    try:
-                        latest_scan = json.loads(scan.summary) if scan.summary else {}
-                    except (TypeError, json.JSONDecodeError):
-                        latest_scan = {}
-                    latest_scan['scanned_at'] = scan.scanned_at.isoformat() if scan.scanned_at else None
-
-                email_rows = db.execute(
-                    select(ConflictEmailLog)
-                    .where(ConflictEmailLog.user_id == db_user.id)
-                ).scalars().all()
-                emailed_conflict_ids = {row.session_id for row in email_rows}
+                latest_conflicts, latest_scan = _latest_scan(db_user, db)
+                emailed_conflict_ids = {
+                    row.session_id for row in db.execute(
+                        select(ConflictEmailLog).where(ConflictEmailLog.user_id == db_user.id)
+                    ).scalars().all()
+                }
 
         return render_template(
             "gn.html",
@@ -543,11 +471,14 @@ def do_gn_ticket():
         logging.info("Manual booking is disabled here; refusing the request.")
         return render_template("manual_booking_disabled.html", user=user), 403
 
-    profile = user_manager.load_profile(user['email'])
+    # Buffers are edited on this form; they are a preference, so they stick.
+    buffer_before = int(request.form.get('buffer_before', 10) or 0)
+    buffer_after = int(request.form.get('buffer_after', 10) or 0)
+    user_manager.update_preferences(user['email'],
+                                    {'buffer_before': buffer_before, 'buffer_after': buffer_after})
 
+    profile = user_manager.load_profile(user['email'])
     prefs = profile.get('preferences', {})
-    window_past_days = prefs.get('window_past_days', 14)
-    window_future_days = prefs.get('window_future_days', 90)
 
     selected_ids = set(get_enabled_sessions(request))
     candidate_ids = set(session.get('book_session_ids', []))
@@ -558,69 +489,38 @@ def do_gn_ticket():
     airtable_client = create_airtable_client(profile['airtable_api_key'])
     candidate_sessions = airtable_client.get_booked_sessions(
         user_email=user['email'],
-        window_past_days=window_past_days,
-        window_future_days=window_future_days,
+        window_past_days=prefs.get('window_past_days', 14),
+        window_future_days=prefs.get('window_future_days', 90),
     )
-
     send_to_gn = [s for s in candidate_sessions if s.s_id in effective_ids]
 
-    progress_session_id = f"gn_booking_{int(time.time())}"
-    clear_progress(progress_session_id)
+    progress_session_id = f"gn_booking_{int(time.time())}_{secrets.token_hex(4)}"
+    start_progress(progress_session_id, user['email'])
     set_progress(progress_session_id, f"Starting booking process for {len(send_to_gn)} sessions...")
-
-    # Extract necessary data from the request *before* spawning the thread
     headless_mode_enabled = (request.form.get('watch_browser') != 'yes')
-    buffer_before = int(request.form.get('buffer_before', 10) or 0)
-    buffer_after = int(request.form.get('buffer_after', 10) or 0)
-
-    prefs = profile.get('preferences', {})
-    prefs['buffer_before'] = buffer_before
-    prefs['buffer_after'] = buffer_after
-
-    user_manager.save_profile(user['email'], {
-        'airtable_api_key': profile.get('airtable_api_key'),
-        'servicenow_password': profile.get('servicenow_password'),
-        'totp_secret': profile.get('totp_secret'),
-        'preferences': prefs
-    })
 
     def run_booking():
         try:
-            # One browser at a time across the whole service. Two at once is how a run
-            # gets killed for memory, so a busy service queues instead of failing.
             def announce(seconds_left):
                 set_progress(progress_session_id, busy_notice(seconds_left), status="waiting")
 
-            with booking_slot(on_wait=announce) as slot:
-                if not slot:
-                    set_progress(
-                        progress_session_id,
-                        "Another booking run is still going after a long wait. Nothing was "
-                        "booked — these sessions are untouched, so try again shortly.",
-                        status="error",
-                    )
-                    return
-
-                booking_results = gn_ticket.gn_ticket_handler(
-                    send_to_gn,
-                    user['email'],
-                    profile.get('servicenow_password'),
-                    "connectednorth@takingitglobal.org",
-                    progress_session_id,
-                    profile.get('airtable_api_key'),
-                    profile.get('totp_secret'),
-                    headless_mode=headless_mode_enabled,  # This will control browser visibility
-                    allow_manual_site_selection=True,  # Explicitly enable manual intervention
-                    chatgpt_api_key=CONFIG.get('CHATGPT_API_KEY'),
-                    buffer_before=buffer_before,
-                    buffer_after=buffer_after
-                )
-            ticket_log.add_successful_submissions(user['email'], booking_results.get('successful_sessions', []))
-            notify_booking_finished(
-                user['email'],
-                booking_results.get('successful_sessions', []),
-                booking_results.get('failed_sessions', []),
+            outcome = tasks.submit_to_gn(
+                user['email'], profile, send_to_gn,
+                progress_session_id=progress_session_id,
+                headless_mode=headless_mode_enabled,
+                allow_manual_site_selection=True,
+                on_wait=announce,
             )
+            if outcome is None:
+                set_progress(
+                    progress_session_id,
+                    "Another booking run is still going after a long wait. Nothing was "
+                    "booked — these sessions are untouched, so try again shortly.",
+                    status="error",
+                )
+                return
+            successful, failed = outcome
+            notify_booking_finished(user['email'], successful, failed)
         except Exception as e:
             set_progress(progress_session_id, f"Critical error during booking: {str(e)}", status="error")
             logging.error(f"Booking thread failed: {e}", exc_info=True)
@@ -671,7 +571,6 @@ def record_conflict_email():
             if not db_user:
                 return jsonify({'ok': False, 'error': 'user not found'}), 404
             # Upsert: delete existing record for this session_id then insert fresh
-            from sqlalchemy import delete as sa_delete
             db.execute(sa_delete(ConflictEmailLog).where(
                 ConflictEmailLog.user_id == db_user.id,
                 ConflictEmailLog.session_id == session_id,
@@ -793,11 +692,17 @@ def set_lookahead_route():
 @require_auth
 def stream_session_progress(session_id):
     """Stream progress updates for a given session ID using Server-Sent Events."""
+    owner = session['user']['email']
+    if get_progress(session_id, owner) is None:
+        abort(404)
 
     def generate():
         last_seq = 0
-        while True:
-            progress = get_progress(session_id)
+        # Bounded: a stream that never sees a terminal entry (the run died before
+        # writing one) must not hold this worker's thread forever.
+        deadline = time.monotonic() + PROGRESS_KEEP_SECONDS
+        while time.monotonic() < deadline:
+            progress = get_progress(session_id, owner) or []
             for entry in progress:
                 if entry.get('seq', 0) > last_seq:
                     yield f"data: {json.dumps(entry)}\n\n"
@@ -814,7 +719,9 @@ def stream_session_progress(session_id):
 def get_session_progress_status(session_id):
     """Return progress updates, optionally filtered by a last sequence number."""
     last_seq = request.args.get('lastSeq', type=int)
-    progress = get_progress(session_id)
+    progress = get_progress(session_id, session['user']['email'])
+    if progress is None:
+        abort(404)
 
     if not progress:
         return jsonify({'entries': [], 'reset': bool(last_seq)})
@@ -943,7 +850,7 @@ def run_auto_scan_now():
     tasks.request_scan(user['email'])
 
     if MANUAL_BOOKING_ENABLED:
-        # Desktop build: do it here, where there is memory for a browser.
+        # This process has the memory for a browser, so do it here.
         threading.Thread(target=dispatch_scan, args=(user['email'],), daemon=True).start()
         session['scan_notice'] = ("The booker is running. You will get an email at "
                                   f"{user['email']} when it finishes, with anything booked, "
@@ -969,95 +876,6 @@ def run_auto_scan_now():
     return redirect(url_for('gn_ticket_page'))
 
 
-@app.route("/update/check")
-@require_auth
-def check_updates():
-    try:
-        update_info = AppUpdater().check_for_updates()
-        return render_template("update.html", update_info=update_info, current_version=AppUpdater().current_version,
-                               user=session['user'])
-    except Exception as e:
-        return f"<h1>Update Check Error</h1><p style='color:red;'>{e}</p>"
-
-
-@app.route("/update/install", methods=["POST"])
-@require_auth
-def install_update():
-    try:
-        update_info = AppUpdater().check_for_updates()
-        if not update_info.get('available'):
-            return jsonify({"success": False, "error": "No update available"})
-
-        with update_progress_lock:
-            update_progress.update({
-                'progress': 0,
-                'message': 'Starting update...',
-                'complete': False,
-                'error': None
-            })
-
-        def run_update():
-            try:
-                AppUpdater().prepare_and_launch_installer(update_info['download_url'])
-                with update_progress_lock:
-                    update_progress.update({
-                        'progress': 100,
-                        'message': 'Update launched',
-                        'complete': True
-                    })
-            except Exception as e:
-                logging.error(f"Update preparation failed: {e}", exc_info=True)
-                with update_progress_lock:
-                    update_progress.update({
-                        'error': str(e),
-                        'message': f'Update failed: {e}',
-                        'complete': True
-                    })
-
-        threading.Thread(target=run_update, daemon=True).start()
-
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/update/install-page")
-@require_auth
-def update_install_page():
-    return render_template("update_progress.html")
-
-
-@app.route("/update/progress")
-@require_auth
-def get_update_progress():
-    with update_progress_lock:
-        return jsonify(update_progress)
-
-
-@app.route("/update/dismiss", methods=["POST"])
-@require_auth
-def dismiss_update():
-    session['update_dismissed'] = True
-    session.pop('update_info', None)
-    return jsonify({"success": True})
-
-
-@app.route("/update/debug")
-@require_auth
-def debug_update_check():
-    import requests, traceback
-    from updater import GITHUB_REPO, UPDATE_CHECK_URL
-    debug_info = {'current_version': APP_VERSION, 'github_repo': GITHUB_REPO, 'update_url': UPDATE_CHECK_URL}
-    try:
-        response = requests.get(UPDATE_CHECK_URL, timeout=10)
-        debug_info['github_status_code'] = response.status_code
-        debug_info['github_response'] = response.text
-    except Exception as e:
-        debug_info['error'] = str(e)
-        debug_info['traceback'] = traceback.format_exc()
-    return f"<pre>{json.dumps(debug_info, indent=2)}</pre>"
-
-
 def get_enabled_sessions(request):
     """Correctly extract selected session IDs from the form."""
     airtable_ids = request.form.getlist('airtable_id')
@@ -1072,5 +890,4 @@ def get_enabled_sessions(request):
 gn_ticket.set_progress_callback(set_progress)
 
 if __name__ == "__main__":
-    # Run the Flask app without debug mode when packaged for production
-    app.run(debug=False, port=5001)
+    app.run(debug=False, port=int(os.getenv("PORT", "5001")))

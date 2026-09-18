@@ -1,11 +1,27 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from db import Base
 
 
 def utcnow():
-    return datetime.utcnow()
+    """The convention for every timestamp column: naive, and UTC.
+
+    Naive because SQLite has no timezone type and Postgres was created with
+    TIMESTAMP WITHOUT TIME ZONE; UTC so the value means the same thing wherever
+    it is read. Anything rendered for a person goes through emailer.friendly_datetime,
+    which attaches UTC and converts to the display zone.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def as_naive_utc(value):
+    """Coerce an aware or naive datetime onto the storage convention above."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 class User(Base):

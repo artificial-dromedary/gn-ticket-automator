@@ -1,19 +1,11 @@
 import base64
 import os
-from datetime import datetime
 from typing import Optional
 from cryptography.fernet import Fernet
 from sqlalchemy import select
-from sqlalchemy import update as sa_update
 
-from db import SessionLocal, Base, engine, ensure_column
-from models import User, UserCredential, UserPreference
-
-
-Base.metadata.create_all(bind=engine)
-# Added after user_preferences shipped, so it needs more than create_all.
-ensure_column("user_preferences", "scan_frequency_hours", "INTEGER", "24")
-ensure_column("user_preferences", "notification_email", "VARCHAR(255)")
+from db import SessionLocal
+from models import User, UserCredential, UserPreference, utcnow
 
 
 # How often a user's scheduled scan runs. The cron job fires hourly and skips
@@ -26,27 +18,9 @@ ensure_column("user_preferences", "notification_email", "VARCHAR(255)")
 SCAN_FREQUENCY_CHOICES = (1, 4, 12, 24)
 DEFAULT_SCAN_FREQUENCY_HOURS = 24
 
-# Intervals that used to be offered, and what replaced them. Anyone still stored
-# on one is moved on import: leaving them there would render the dashboard's
-# dropdown with nothing selected, and the next save would silently pick for them.
+# Intervals that used to be offered, and what replaced them. db.init_db() moves
+# anyone still stored on one when the process starts.
 RETIRED_SCAN_FREQUENCIES = {5: 4}
-
-
-def _retire_removed_scan_frequencies():
-    """Move stored intervals that are no longer offered. A no-op once none are."""
-    from models import UserPreference
-
-    with SessionLocal() as db:
-        for retired, replacement in RETIRED_SCAN_FREQUENCIES.items():
-            db.execute(
-                sa_update(UserPreference)
-                .where(UserPreference.scan_frequency_hours == retired)
-                .values(scan_frequency_hours=replacement)
-            )
-        db.commit()
-
-
-_retire_removed_scan_frequencies()
 
 
 def normalize_notification_email(value):
@@ -154,7 +128,7 @@ class UserProfileManager:
         email = email.strip().lower()
         with SessionLocal() as db:
             user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-            now = datetime.utcnow()
+            now = utcnow()
             if not user:
                 user = User(email=email, name=name, picture_url=picture_url, created_at=now, last_login_at=now)
                 db.add(user)
@@ -178,7 +152,7 @@ class UserProfileManager:
             creds.airtable_api_key_enc = self._encrypt(profile_data.get("airtable_api_key"))
             creds.servicenow_password_enc = self._encrypt(profile_data.get("servicenow_password"))
             creds.totp_secret_enc = self._encrypt(profile_data.get("totp_secret"))
-            creds.updated_at = datetime.utcnow()
+            creds.updated_at = utcnow()
 
             prefs = profile_data.get("preferences") or {}
             self._save_preferences(db, user.id, prefs)
@@ -206,7 +180,7 @@ class UserProfileManager:
             preferences.window_future_days = normalize_lookahead(prefs.get("window_future_days"))
         if "notification_email" in prefs:
             preferences.notification_email = normalize_notification_email(prefs.get("notification_email"))
-        preferences.updated_at = datetime.utcnow()
+        preferences.updated_at = utcnow()
 
     def load_profile(self, email):
         email = email.strip().lower()

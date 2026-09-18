@@ -1,10 +1,7 @@
-# Cron-job architecture: one web service for the dashboard and one scheduled job that
-# does the daily scan and booking. No Redis and no long-running worker — the scan is a
-# short daily process, and Render bills cron jobs per minute of execution.
-#
-# The Celery task definitions in tasks.py are still present and still work. Setting
-# GN_INLINE_TASKS=1 makes them run in-process instead of being enqueued, so a future
-# move to a worker + beat deployment is a configuration change, not a rewrite.
+# Two services from one image: the web service for the dashboard, and a cron job
+# that does the hourly scan and booking. No queue, no broker, no long-running
+# worker — the scan is a short process, and Render bills cron jobs per minute of
+# execution. The database lock table keeps overlapping runs apart.
 
 envVarGroups:
   - name: gn-ticket-shared
@@ -39,8 +36,6 @@ envVarGroups:
       # same 256 MB / 0.1 CPU either way.
       - key: DATABASE_URL
         sync: false
-      - key: GN_INLINE_TASKS
-        value: "1"
       # The zone the schedule is read in — not the zone times are displayed in,
       # which is DISPLAY_TZ below.
       - key: AUTO_SCAN_TZ
@@ -73,9 +68,10 @@ envVarGroups:
         sync: false
       - key: CHATGPT_API_KEY
         sync: false
-      # The key the retired desktop app encrypted with (APP_ENCRYPTION_KEY from its
-      # bundled .env), so people moving off it can upload their gn_ticket.db instead
-      # of redoing setup. Different from APP_ENCRYPTION_KEY, which Render generated
+      # The key the unmaintained desktop app encrypted with (APP_ENCRYPTION_KEY from
+      # its bundled .env), so people moving off it can upload their gn_ticket.db
+      # instead of redoing setup. The desktop app's source is at the git tag
+      # desktop-app-final. Different from APP_ENCRYPTION_KEY, which Render generated
       # for this service and which cannot open anything written on a Mac. List every
       # key the handed-out builds used, comma-separated, if there was more than one.
       - key: DESKTOP_APP_ENCRYPTION_KEY
@@ -90,16 +86,12 @@ services:
     runtime: docker
     plan: starter
     dockerfilePath: ./Dockerfile
-    # Manual booking drives Chrome inside this process. Measured peak is ~355 MB of the
-    # 512 MB a starter instance gets, so one browser fits and a second would not.
-    dockerCommand: gunicorn main:app --bind 0.0.0.0:$PORT --timeout 120 --graceful-timeout 120 --workers 1 --threads 2
+    # The start command is the Dockerfile's CMD; it reads $PORT.
     healthCheckPath: /
     envVars:
       - fromGroup: gn-ticket-shared
-      - key: DISABLE_UPDATES
-        value: "1"
       # Manual booking drives Chrome in this process, which 512 MB cannot survive.
-      # Booking here is scheduled only; on-demand booking lives in the desktop app.
+      # Booking here is scheduled, plus "Run scan now", which starts the cron job.
       - key: GN_ENABLE_MANUAL_BOOKING
         value: "false"
       # Lets "Run scan now" start the scan job, which has the memory for a browser.

@@ -3,14 +3,14 @@
 It used to last only until the page reloaded, so a session someone deliberately
 took out came back and was booked by the next scheduled run.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 
 import tasks
 from user_profiles import user_manager
 
-from test_tasks import BASE_TIME, FakeAirtable, FakeSession, USER_EMAIL
+from test_tasks import BASE_TIME, FakeAirtable, USER_EMAIL
 
 
 @pytest.fixture

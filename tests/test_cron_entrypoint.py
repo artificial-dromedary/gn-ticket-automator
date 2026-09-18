@@ -1,8 +1,5 @@
-"""Tests for the broker-free (Render Cron Job) execution path.
-
-The Celery task definitions are unchanged; what these cover is the inline dispatch
-that lets the same code run in a single short-lived process, plus the two safety
-guards the cron deployment relies on: dry run and the per-run booking cap.
+"""Tests for the cron job entrypoint and the two safety guards it relies on:
+dry run and the per-run booking cap.
 """
 import pytest
 
@@ -15,32 +12,22 @@ from test_tasks import FakeAirtable, USER_EMAIL, registered_user, wired  # noqa:
 
 @pytest.fixture
 def inline(monkeypatch):
-    monkeypatch.setattr(tasks, "INLINE_TASKS", True)
+    """Book for real, in this process: the `wired` fixture stubs the scan-to-booking
+    hand-off so scan tests can inspect it, and these tests need it live."""
+    monkeypatch.setattr(tasks, "dispatch_booking",
+                        lambda email, ids, manual=False: tasks.book_sessions(email, ids, manual))
 
 
-def test_dispatch_scan_enqueues_when_a_broker_is_configured(monkeypatch, registered_user):
-    seen = []
-    monkeypatch.setattr(tasks, "INLINE_TASKS", False)
-    monkeypatch.setattr(tasks.scan_user, "delay", lambda email: seen.append(email))
-
-    tasks.dispatch_scan(USER_EMAIL)
-
-    assert seen == [USER_EMAIL]
-
-
-def test_dispatch_scan_runs_here_when_there_is_no_broker(monkeypatch, inline, registered_user):
+def test_dispatch_scan_runs_here(monkeypatch, registered_user):
     ran = []
     monkeypatch.setattr(tasks, "_scan_user", lambda email: ran.append(email))
-    monkeypatch.setattr(tasks.scan_user, "delay",
-                        lambda email: pytest.fail("should not enqueue in inline mode"))
 
     tasks.dispatch_scan(USER_EMAIL)
 
     assert ran == [USER_EMAIL]
 
 
-def test_inline_scan_books_without_touching_the_queue(monkeypatch, inline, wired):
-    """End to end with no broker: a scan should book its clean sessions in-process."""
+def test_a_scan_books_its_clean_sessions_in_process(monkeypatch, wired, inline):
     booked = []
 
     def fake_handler(send_to_gn, *args, **kwargs):
@@ -48,15 +35,13 @@ def test_inline_scan_books_without_touching_the_queue(monkeypatch, inline, wired
         return {"successful_sessions": [], "failed_sessions": []}
 
     monkeypatch.setattr(tasks.gn_ticket, "gn_ticket_handler", fake_handler)
-    monkeypatch.setattr(tasks.book_sessions, "delay",
-                        lambda *a, **k: pytest.fail("should not enqueue in inline mode"))
 
     tasks.scan_user(USER_EMAIL)
 
     assert booked == ["recClean1", "recClean2"]
 
 
-def test_dry_run_submits_nothing(monkeypatch, inline, wired):
+def test_dry_run_submits_nothing(monkeypatch, wired, inline):
     monkeypatch.setattr(tasks, "DRY_RUN", True)
     monkeypatch.setattr(tasks.gn_ticket, "gn_ticket_handler",
                         lambda *a, **k: pytest.fail("dry run must not submit tickets"))
@@ -67,7 +52,7 @@ def test_dry_run_submits_nothing(monkeypatch, inline, wired):
     assert len(wired["conflict_emails"]) == 1
 
 
-def test_booking_cap_limits_one_run_and_leaves_the_rest(monkeypatch, inline, wired):
+def test_booking_cap_limits_one_run_and_leaves_the_rest(monkeypatch, wired, inline):
     monkeypatch.setattr(tasks, "MAX_BOOKINGS_PER_RUN", 1)
     booked = []
 
@@ -82,7 +67,7 @@ def test_booking_cap_limits_one_run_and_leaves_the_rest(monkeypatch, inline, wir
     assert booked == ["recClean1"]
 
 
-def test_no_cap_by_default(monkeypatch, inline, wired):
+def test_no_cap_by_default(monkeypatch, wired, inline):
     booked = []
 
     def fake_handler(send_to_gn, *args, **kwargs):

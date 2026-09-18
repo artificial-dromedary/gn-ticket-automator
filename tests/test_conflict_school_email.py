@@ -8,7 +8,7 @@ sessions are listed, or the reader cannot tell which booking is meant.
 from datetime import datetime, timedelta, timezone
 
 import emailer
-from conflict import check_for_time_conflicts
+from conflict import check_for_time_conflicts, conflict_payload
 from emailer import (teacher_conflict_email, teacher_conflict_recipients,
                      teacher_conflict_subject)
 
@@ -128,11 +128,10 @@ def test_no_draft_for_holds_that_are_not_a_clash_between_two_sessions():
 
 
 def test_the_notification_carries_one_draft_per_clashing_pair(monkeypatch):
-    import tasks
 
     fish, beads = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
     check_for_time_conflicts([fish, beads], [], now=_now())
-    payload = [tasks._session_to_dict(s) for s in (fish, beads)]
+    payload = [conflict_payload(s) for s in (fish, beads)]
 
     sent = []
     monkeypatch.setattr(emailer, "_send", lambda to, subject, body: sent.append(body))
@@ -146,11 +145,10 @@ def test_the_notification_carries_one_draft_per_clashing_pair(monkeypatch):
 
 
 def test_the_daily_summary_reads_booked_then_conflicts_then_teachers_then_draft(monkeypatch):
-    import tasks
 
     fish, beads = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
     check_for_time_conflicts([fish, beads], [], now=_now())
-    payload = [tasks._session_to_dict(s) for s in (fish, beads)]
+    payload = [conflict_payload(s) for s in (fish, beads)]
     booked = [{"title": "Clean One", "school": "Inuksuk High School",
                "start_time": JUNE_4_10AM_EDT.isoformat(), "ticket_id": "TKT-1"}]
     removed = [{"title": "Taken Off", "school": "Nakasuk School",

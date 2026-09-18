@@ -2,7 +2,7 @@
 
 A scheduled run stays quiet — it reports through the 5pm daily summary instead.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
 
