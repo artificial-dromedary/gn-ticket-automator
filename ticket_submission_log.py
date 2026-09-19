@@ -1,18 +1,22 @@
+import os
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, delete
 
-from db import SessionLocal, Base, engine
+from db import SessionLocal
 from models import TicketSubmission, User
 
-
-Base.metadata.create_all(bind=engine)
+# How long a submitted ticket stays on record. The ghost-ticket conflict check and
+# the daily summary both read this history, so the web app and the cron job must
+# keep the same window: they used to differ (30 vs 365 days), and every dashboard
+# load quietly pruned rows the scheduled run was written to expect.
+DEFAULT_RETENTION_DAYS = int(os.getenv("GN_TICKET_HISTORY_DAYS", "365"))
 
 
 class TicketSubmissionLog:
     """Persisted log of submitted GN tickets retained for a rolling window."""
 
-    def __init__(self, retention_days=365):
-        self.retention_days = retention_days
+    def __init__(self, retention_days=None):
+        self.retention_days = DEFAULT_RETENTION_DAYS if retention_days is None else retention_days
 
     def _utcnow(self):
         return datetime.now(timezone.utc)
@@ -83,6 +87,10 @@ class TicketSubmissionLog:
                 )
                 db.add(row)
             db.commit()
+
+
+# The one instance every caller shares.
+ticket_log = TicketSubmissionLog()
 
 
 def parse_log_start_and_end(entry):

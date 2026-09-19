@@ -5,20 +5,13 @@
       "name": "Flask dev server",
       "runtimeExecutable": "python",
       "runtimeArgs": ["main.py"],
-      "port": 5000,
+      "port": 5001,
       "autoPort": false
     },
     {
-      "name": "Celery worker",
-      "runtimeExecutable": "celery",
-      "runtimeArgs": ["-A", "tasks.celery_app", "worker", "-l", "info"],
-      "port": 6379
-    },
-    {
-      "name": "Celery beat (scheduler)",
-      "runtimeExecutable": "celery",
-      "runtimeArgs": ["-A", "tasks.celery_app", "beat", "-l", "info"],
-      "port": 6379
+      "name": "Scheduled scan (dry run)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["run_scan.py", "--dry-run", "--force"]
     }
   ]
 }

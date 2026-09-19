@@ -1,51 +1,57 @@
 # -*- coding: utf-8 -*-
 import concurrent.futures
 import os
+import tempfile
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import json
 import pyotp
 import difflib
-import re
 import logging
 
 import requests
-from pytz import timezone
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.common.exceptions import TimeoutException, ElementNotInteractableException, \
-    StaleElementReferenceException, NoSuchElementException, ElementClickInterceptedException
+from selenium.common.exceptions import StaleElementReferenceException, ElementClickInterceptedException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.wait import WebDriverWait
 
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.alert import Alert
 
+from airtable_integration import create_airtable_client, zoom_meeting_id
 from site_list import AVAILABLE_SITES
 
+# ServiceNow takes the session window in Eastern time whatever the school's zone.
+GN_FORM_ZONE = ZoneInfo("America/New_York")
+
 # ---------------------------------------------------------------------------
-# Site cache — stores the live dropdown options scraped from ServiceNow
+# Site cache — the live dropdown options scraped from ServiceNow
 # ---------------------------------------------------------------------------
-_SITE_CACHE_PATH = os.path.join(os.path.expanduser("~"), "GN_Ticket_Automator", "site_cache.json")
+# On the hosted service the filesystem does not survive a deploy, so the cache
+# mostly saves repeat runs inside one container's life. Point it somewhere
+# persistent with GN_SITE_CACHE_PATH if that ever matters.
+_SITE_CACHE_PATH = os.getenv("GN_SITE_CACHE_PATH",
+                             os.path.join(tempfile.gettempdir(), "gn_ticket_site_cache.json"))
 _SITE_CACHE_MAX_AGE_DAYS = 30
 
 
 def load_site_cache():
-    """Return (sites_list, is_stale).  Falls back to AVAILABLE_SITES if missing/expired."""
+    """Return (sites_list, is_stale). Falls back to AVAILABLE_SITES if missing/expired."""
     try:
         if os.path.exists(_SITE_CACHE_PATH):
             with open(_SITE_CACHE_PATH, "r") as f:
                 data = json.load(f)
             fetched = datetime.fromisoformat(data["fetched_at"])
-            age_days = (datetime.now() - fetched).days
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=timezone.utc)
+            age_days = (datetime.now(timezone.utc) - fetched).days
             if age_days < _SITE_CACHE_MAX_AGE_DAYS and data.get("sites"):
                 return data["sites"], False   # fresh
     except Exception as e:
-        print(f"[site_cache] Could not read cache: {e}")
+        logging.warning("[site_cache] Could not read cache: %s", e)
     return list(AVAILABLE_SITES), True   # stale / missing
 
 
@@ -54,10 +60,10 @@ def save_site_cache(sites):
     try:
         os.makedirs(os.path.dirname(_SITE_CACHE_PATH), exist_ok=True)
         with open(_SITE_CACHE_PATH, "w") as f:
-            json.dump({"fetched_at": datetime.now().isoformat(), "sites": sites}, f, indent=2)
-        print(f"[site_cache] Saved {len(sites)} sites.")
+            json.dump({"fetched_at": datetime.now(timezone.utc).isoformat(), "sites": sites}, f, indent=2)
+        logging.info("[site_cache] Saved %d sites.", len(sites))
     except Exception as e:
-        print(f"[site_cache] Could not write cache: {e}")
+        logging.warning("[site_cache] Could not write cache: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +204,7 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
     if not airtable_api_key:
         set_progress(progress_session_id, "Missing Airtable API key", status="error")
         raise ValueError("Airtable API key is None")
+    airtable = create_airtable_client(airtable_api_key)
 
     total_sessions = len(book_sessions)
     current_session = 0
@@ -248,7 +255,7 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
         input_box = None
         try:
             input_box = WebDriverWait(driver, 20).until(
-                expected_conditions.presence_of_element_located((By.ID, "txtResponse"))
+                EC.presence_of_element_located((By.ID, "txtResponse"))
             )
         except Exception:
             driver.switch_to.default_content()
@@ -258,7 +265,7 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                 try:
                     driver.switch_to.frame(iframe)
                     input_box = WebDriverWait(driver, 5).until(
-                        expected_conditions.presence_of_element_located((By.ID, "txtResponse"))
+                        EC.presence_of_element_located((By.ID, "txtResponse"))
                     )
                     break
                 except Exception:
@@ -275,9 +282,9 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
             detail = f" ({error_text})" if error_text else ""
             raise Exception(f"Could not locate 2FA input field{detail} — check credentials or app.log")
 
-        # Generate token at the last moment for maximum TOTP validity window
+        # Generated at the last moment for maximum TOTP validity window. Never
+        # logged: a live code in the log is a live code.
         token = generate_totp_token(totp_secret)
-        print(f"Generated 2FA token: {token}")
 
         set_progress(progress_session_id, "Entering 2FA token...", 5, 8)
 
@@ -288,7 +295,7 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
 
         set_progress(progress_session_id, "Waiting for login to complete...", 6, 8)
 
-        ready = WebDriverWait(driver, 30).until(expected_conditions.url_to_be("https://nunavutprod.service-now.com/sp"))
+        WebDriverWait(driver, 30).until(EC.url_to_be("https://nunavutprod.service-now.com/sp"))
 
         set_progress(progress_session_id, "Login successful! Preparing sessions...", 7, 8)
 
@@ -352,27 +359,28 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
             print("Processing", cn_session.title, "at", cn_session.school)
 
             try:
-                # Verify Zoom meeting exists in Airtable
-                zoom_check_result = check_zoom_meeting(cn_session, airtable_api_key)
+                if not cn_session.start_time:
+                    raise Exception("No start date/time in Airtable — session skipped")
 
-                if not zoom_check_result:
+                # One fresh read: the Zoom link is often added after the session
+                # was booked, so the copy on the candidate may be stale.
+                zoom_link = airtable.get_record(cn_session.s_id).get('WebEx/Zoom Link', '') or ''
+                zoom_id = zoom_meeting_id(zoom_link)
+                if not zoom_id:
                     set_progress(progress_session_id, "No Zoom link found", 8, 8, "zoom_warning",
                                  session_ref=cn_session.s_id)
                     raise Exception("No Zoom link found — session skipped")
-                else:
-                    set_progress(progress_session_id, "Zoom confirmed", 8, 8, "zoom_ok",
-                                 session_ref=cn_session.s_id)
+                set_progress(progress_session_id, "Zoom confirmed", 8, 8, "zoom_ok",
+                             session_ref=cn_session.s_id)
 
-                # Submit GN ticket
                 ticket_result = do_gn_ticket(
                     driver,
                     cn_session,
-                    username,
-                    pw,
+                    zoom_id,
+                    airtable,
                     buffer_before,
                     buffer_after,
                     progress_session_id,
-                    airtable_api_key,
                     chatgpt_api_key,
                     allow_manual_site_selection,
                     headless_mode,
@@ -380,11 +388,8 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                     live_sites=live_sites,
                 )
 
-                # Mark as successfully requested in Airtable
-                set_airtable_field(cn_session, "GN Ticket Requested", True, airtable_api_key)
-
                 ticket_id = ticket_result.get('ticket_id', 'Unknown')
-                successful_sessions.append({
+                entry = {
                     'session_id': cn_session.s_id,
                     'title': cn_session.title,
                     'school': cn_session.school,
@@ -392,7 +397,10 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
                     'start_time': cn_session.start_time.isoformat() if cn_session.start_time else None,
                     'length': cn_session.length,
                     'ticket_id': ticket_id,
-                })
+                }
+                if ticket_result.get('warning'):
+                    entry['warning'] = ticket_result['warning']
+                successful_sessions.append(entry)
 
             except Exception as e:
                 error_msg = f"❌ Error processing {cn_session.title}: {str(e)}"
@@ -437,27 +445,6 @@ def gn_ticket_handler(book_sessions, username, pw, zoom_account, progress_sessio
         'failed_sessions': failed_sessions,
         'warning_sessions': [],
     }
-
-
-def check_zoom_meeting(the_session, api_key):
-    """Check if a Zoom meeting link exists for the session in Airtable"""
-    try:
-        response = requests.get(f"https://api.airtable.com/v0/appP1kThwW9zVEpHr/Sessions/{the_session.s_id}",
-                                headers={"Authorization": "Bearer " + api_key})
-        airtable_response = response.json()
-
-        zoom_link = airtable_response.get('fields', {}).get('WebEx/Zoom Link', '')
-
-        if zoom_link and zoom_link.strip() and zoom_link != '':
-            print(f"Zoom link found for {the_session.title}: {zoom_link}")
-            return True
-        else:
-            print(f"No Zoom link found for {the_session.title}")
-            return False
-
-    except Exception as e:
-        print(f"Error checking Zoom link for {the_session.title}: {e}")
-        return False
 
 
 def get_all_dropdown_options_from_html(driver, element_id_to_click, results_css_selector="ul.select2-results"):
@@ -529,7 +516,7 @@ def get_all_dropdown_options_from_html(driver, element_id_to_click, results_css_
 
         # Close the dropdown by pressing ESC
         search_input_field.send_keys(Keys.ESCAPE)  # Send ESC to the active input field
-        set_progress_func(None, f"DEBUG SITE: get_all_dropdown_options_from_html: Closed dropdown with ESCAPE key.",
+        set_progress_func(None, "DEBUG SITE: get_all_dropdown_options_from_html: Closed dropdown with ESCAPE key.",
                           None, None)
         time.sleep(0.5)  # Short wait after closing
 
@@ -834,7 +821,7 @@ def smart_site_selection(driver, cn_session, wait_time=1.5, progress_session_id=
         if try_dropdown_selection(driver, element_id, precomputed_site, wait_time):
             return precomputed_site   # return the matched name so caller can surface it
         set_progress_func(progress_session_id,
-                          f"DEBUG SITE: Pre-computed match failed in browser, falling back.", None, None, "warning")
+                          "DEBUG SITE: Pre-computed match failed in browser, falling back.", None, None, "warning")
 
     set_progress_func(progress_session_id,
                       f"DEBUG SITE: Starting smart site selection for '{cn_session.school}' in '{cn_session.community}'",
@@ -921,47 +908,16 @@ def smart_site_selection(driver, cn_session, wait_time=1.5, progress_session_id=
     return False
 
 
-def get_zoom_digits(cn_session, api_key):
-    """Extract Zoom meeting ID from the Zoom link in Airtable"""
-    try:
-        response = requests.get(f"https://api.airtable.com/v0/appP1kThwW9zVEpHr/Sessions/{cn_session.s_id}",
-                                headers={"Authorization": "Bearer " + api_key})
-        airtable_response = response.json()
-
-        zoom_link = str(airtable_response['fields']['WebEx/Zoom Link'])
-        # Extract meeting ID from the Zoom URL - typically the last 11 digits
-        zoom_digits = zoom_link[-11:]
-        print(f"Extracted Zoom digits: {zoom_digits}")
-        return zoom_digits
-    except Exception as e:
-        print(f"Error extracting Zoom digits: {e}")
-        return None
-
-
-def update_sip_url(item, url, api_key):
-    """Update SIP URL in Airtable"""
-    sip_data = {'fields': {'Bridge Address / SIP URI': url, 'Send Meeting Invite to:': "All"},
-                "typecast": True}
-    json_data = json.dumps(sip_data)
-    response = requests.patch(f"https://api.airtable.com/v0/appP1kThwW9zVEpHr/Sessions/{item.s_id}",
-                              headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
-                              data=json_data)
-
-
-def set_airtable_field(item, field, content, api_key):
-    """Update a field in Airtable"""
-    the_data = {'fields': {field: content}, "typecast": True}
-    json_data = json.dumps(the_data)
-    response = requests.patch(f"https://api.airtable.com/v0/appP1kThwW9zVEpHr/Sessions/{item.s_id}",
-                              headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
-                              data=json_data)
-
-
-def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_after=10,
-                 progress_session_id=None, api_key=None, chatgpt_api_key=None,
+def do_gn_ticket(driver, cn_session, zoom_id, airtable, buffer_before=10, buffer_after=10,
+                 progress_session_id=None, chatgpt_api_key=None,
                  allow_manual_site_selection=False, headless_mode=True,
                  precomputed_site=None, live_sites=None):
-    """Fill and submit the GN ticket form for a single session."""
+    """Fill and submit the GN ticket form for a single session.
+
+    Returns {"status", "ticket_id"} and, when the ticket went in but Airtable could
+    not be told, a "warning" saying so: the ticket exists either way, and hiding
+    that behind a failure is how the next run files it twice.
+    """
     wait_time = 1.5
     s_ref = cn_session.s_id   # shorthand for session_ref
 
@@ -1044,10 +1000,9 @@ def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_afte
         raise Exception("Failed to set screen layout")
 
     # Session date and time
-    formatted_date = cn_session.start_time.strftime("%Y-%m-%d")
-    EST = timezone('US/Eastern')
-    start_time_EST = cn_session.start_time.astimezone(EST) - timedelta(minutes=buffer_before)
-    end_time_EST = cn_session.start_time.astimezone(EST) + timedelta(minutes=cn_session.length + buffer_after)
+    start_time_EST = cn_session.start_time.astimezone(GN_FORM_ZONE) - timedelta(minutes=buffer_before)
+    end_time_EST = cn_session.start_time.astimezone(GN_FORM_ZONE) + timedelta(minutes=cn_session.length + buffer_after)
+    formatted_date = start_time_EST.strftime("%Y-%m-%d")
     start_str = start_time_EST.strftime("%-I:%M %p")
     end_str = end_time_EST.strftime("%-I:%M %p")
     set_progress(
@@ -1107,10 +1062,7 @@ def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_afte
     element = driver.switch_to.active_element
     element.clear()
 
-    zoom_digits = get_zoom_digits(cn_session, api_key)
-    if not zoom_digits:
-        raise Exception("No Zoom connection details found — session skipped")
-    element.send_keys(zoom_digits + "@zoomcrc.com")
+    element.send_keys(zoom_id + "@zoomcrc.com")
 
     time.sleep(wait_time)
     element.send_keys(Keys.ENTER)
@@ -1123,27 +1075,36 @@ def do_gn_ticket(driver, cn_session, username, pw, buffer_before=10, buffer_afte
     submit_btn.click()
     time.sleep(0.5)   # brief pause then let WebDriverWait handle the redirect
 
-    WebDriverWait(driver, 30).until(expected_conditions.url_contains("&table=sc_request"))
+    WebDriverWait(driver, 30).until(EC.url_contains("&table=sc_request"))
 
-    set_airtable_field(cn_session, "GN Ticket Requested", True, api_key)
-
-    ticket_id = ""
+    # From here the ticket exists in ServiceNow. Everything below is bookkeeping.
+    ticket_id = "Unknown"
     try:
         req_number_element = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//div[contains(@class,'text-muted') and contains(.,'Request Number')]//b"))
         )
-        ticket_id = req_number_element.text.strip()
-        print("req number:", ticket_id)
-        current_gn_ticket_id = cn_session.gn_ticket_id if cn_session.gn_ticket_id else ""
-        set_airtable_field(cn_session, "GN Ticket ID", f"{current_gn_ticket_id} #gn-submitted {ticket_id}".strip(), api_key)
+        ticket_id = req_number_element.text.strip() or "Unknown"
     except Exception as e:
-        print(f"Could not retrieve ticket ID: {e}")
-        ticket_id = "Unknown"
+        logging.warning("Could not read the request number for %s: %s", cn_session.title, e)
 
-    set_progress(progress_session_id, ticket_id or "submitted", None, None,
+    # One write, both fields: the flag that keeps the session out of the next
+    # scan, and the marker the candidate query filters on.
+    fields = {"GN Ticket Requested": True}
+    if ticket_id != "Unknown":
+        fields["GN Ticket ID"] = f"{cn_session.gn_ticket_id or ''} #gn-submitted {ticket_id}".strip()
+    result = {"status": "success", "ticket_id": ticket_id}
+    try:
+        airtable.update_session_fields(cn_session.s_id, fields)
+    except Exception as e:
+        logging.error("Ticket %s was filed for %s but Airtable was not updated: %s",
+                      ticket_id, cn_session.title, e)
+        result["warning"] = (f"Ticket {ticket_id} was filed, but Airtable could not be updated. "
+                             f"Tick 'GN Ticket Requested' on the session by hand, or the next "
+                             f"run will file it again.")
+
+    set_progress(progress_session_id, ticket_id, None, None,
                  status="session-complete", session_ref=s_ref)
-
-    return {"status": "success", "ticket_id": ticket_id}
+    return result
 
 
 # Function to be called by main.py to set the progress function

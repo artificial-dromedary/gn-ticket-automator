@@ -35,7 +35,7 @@ def wired(monkeypatch, registered_user):
     monkeypatch.setattr(tasks, "create_airtable_client", lambda key: airtable)
     monkeypatch.setattr(tasks, "send_conflict_email", lambda *a, **k: None)
     monkeypatch.setattr(tasks, "send_booking_summary_email", lambda *a, **k: None)
-    monkeypatch.setattr(tasks.book_sessions, "delay",
+    monkeypatch.setattr(tasks, "dispatch_booking",
                         lambda email, ids, manual=False: calls["booked_ids"].append(list(ids)))
     return calls
 

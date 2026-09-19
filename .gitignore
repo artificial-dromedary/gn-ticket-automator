@@ -171,3 +171,5 @@ flask_session/
 
 # Logs
 *.log
+# macOS
+.DS_Store

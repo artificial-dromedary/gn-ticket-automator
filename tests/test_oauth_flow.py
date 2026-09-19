@@ -24,7 +24,8 @@ def client(monkeypatch):
 def test_login_stores_the_pkce_verifier_in_the_session(client):
     response = client.get("/login")
 
-    assert response.status_code == 200
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("https://accounts.google.com/")
     with client.session_transaction() as session:
         assert session.get("oauth_state")
         assert session.get("oauth_code_verifier"), "verifier must survive into the callback request"
@@ -32,9 +33,9 @@ def test_login_stores_the_pkce_verifier_in_the_session(client):
 
 def test_the_auth_url_actually_carries_a_pkce_challenge(client):
     """If Google is sent a challenge, it will demand the verifier back."""
-    body = client.get("/login").get_data(as_text=True)
+    location = client.get("/login").headers["Location"]
 
-    assert "code_challenge=" in body
+    assert "code_challenge=" in location
 
 
 def test_the_callback_restores_the_verifier_onto_its_own_flow(client, monkeypatch):

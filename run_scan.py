@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """Entrypoint for the scheduled scan.
 
-This is what the Render Cron Job runs. It does the same work the Celery beat +
-worker pair did, but in a single short-lived process with no broker, so the
-deployment needs neither Redis nor a long-running worker.
+This is what the Render Cron Job runs: one short-lived process that scans and
+books for everyone who is due, then exits.
 
     python run_scan.py                  # scan and book for everyone who is due
     python run_scan.py --force          # ignore intervals, scan every opted-in user
@@ -41,7 +40,6 @@ def main(argv=None):
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
     # These are read at import time by tasks.py, so they must be set before it loads.
-    os.environ["GN_INLINE_TASKS"] = "1"
     if args.dry_run:
         os.environ["GN_DRY_RUN"] = "1"
     if args.max_bookings is not None:
@@ -58,10 +56,12 @@ def main(argv=None):
         return 2
 
     try:
+        from db import init_db
+        init_db()
         import tasks
         from user_profiles import user_manager
     except Exception:
-        log.exception("Could not start: import failed.")
+        log.exception("Could not start: import or database setup failed.")
         return 2
 
     if tasks.DRY_RUN:

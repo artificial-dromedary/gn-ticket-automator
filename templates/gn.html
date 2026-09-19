@@ -639,7 +639,6 @@ document.addEventListener('DOMContentLoaded', function() {
 <body>
 
 <!-- Update notification injected via include will appear at the top -->
-{% include 'update_notification.html' %}
 
 <!-- Header -->
 <header class="header content-wrapper">
@@ -649,16 +648,6 @@ document.addEventListener('DOMContentLoaded', function() {
     <a href="/logout" style="color: white; margin-left: 20px;">Logout</a>
   </div>
 </header>
-
-<!-- Update available banner -->
-{% if update_available and not session.get('update_dismissed') %}
-<div class="content-wrapper">
-    <div class="alert alert-info">
-        📦 <strong>Update Available:</strong> Version {{ update_info.version }} is ready to install.
-        <a href="/update/check" class="btn btn-sm">View Details</a>
-    </div>
-</div>
-{% endif %}
 
 <!-- User Info Section -->
 <section class="intro content-wrapper">

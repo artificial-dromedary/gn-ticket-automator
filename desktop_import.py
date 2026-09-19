@@ -22,7 +22,7 @@ from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 
 from db import SessionLocal
-from models import ConflictEmailLog, TicketSubmission, User
+from models import ConflictEmailLog, TicketSubmission, User, utcnow
 from user_profiles import fernet_for, user_manager
 
 # The key the desktop builds encrypted with. Kept separate from APP_ENCRYPTION_KEY,
@@ -257,7 +257,7 @@ def import_desktop_profile(path, email, name=None, replace=False, extra_keys=())
             known_tickets.add(key)
             db.add(TicketSubmission(
                 user_id=user.id,
-                submitted_at=_parse_time(entry["submitted_at"]) or datetime.utcnow(),
+                submitted_at=_parse_time(entry["submitted_at"]) or utcnow(),
                 session_id=entry["session_id"], title=entry["title"], school=entry["school"],
                 teacher=entry["teacher"], ticket_id=entry["ticket_id"],
                 start_time=_parse_time(entry["start_time"]), length=entry["length"] or 0,
@@ -276,7 +276,7 @@ def import_desktop_profile(path, email, name=None, replace=False, extra_keys=())
             db.add(ConflictEmailLog(
                 user_id=user.id, session_id=entry["session_id"],
                 conflict_session_id=entry["conflict_session_id"],
-                emailed_at=_parse_time(entry["emailed_at"]) or datetime.utcnow(),
+                emailed_at=_parse_time(entry["emailed_at"]) or utcnow(),
             ))
             added_emailed += 1
 

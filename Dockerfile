@@ -20,9 +20,14 @@ ENV CHROMEDRIVER=/usr/bin/chromedriver
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Pinned versions, so a deploy installs exactly what was tested.
+COPY requirements.lock /app/requirements.lock
+RUN pip install --no-cache-dir -r /app/requirements.lock
 
 COPY . /app
 
-CMD ["gunicorn", "main:app", "-b", "0.0.0.0:10000"]
+# The one definition of how the web service starts. The cron job overrides this
+# with `python run_scan.py` in render.yaml. Manual booking, where it is enabled,
+# drives Chrome inside this process: measured peak is ~355 MB, so one worker with
+# two threads is what a 512 MB instance can hold.
+CMD gunicorn main:app --bind 0.0.0.0:${PORT:-10000} --timeout 120 --graceful-timeout 120 --workers 1 --threads 2

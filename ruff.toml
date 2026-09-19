@@ -1,0 +1,12 @@
+# Lint only what pyflakes would have caught, plus a couple of cheap wins. The
+# codebase predates a formatter; a style pass is a separate decision.
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["F", "E9", "W6", "B006", "B008"]
+
+[lint.per-file-ignores]
+# Fixtures are imported from test_tasks and then named as parameters, which
+# ruff reads as a redefinition.
+"tests/*" = ["F811"]

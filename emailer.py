@@ -358,6 +358,8 @@ def send_booking_summary_email(to_email, successful_sessions, failed_sessions,
         for session in successful_sessions:
             lines.append(f"- {session.get('title', 'Unknown Session')} | {session.get('school', 'Unknown School')} | {friendly_datetime(session.get('start_time'))}")
             lines.append(f"  Ticket: {session.get('ticket_id', 'Unknown')}")
+            if session.get('warning'):
+                lines.append(f"  Needs you: {session['warning']}")
         lines.append("")
     elif manual:
         lines.append("No sessions were booked.")

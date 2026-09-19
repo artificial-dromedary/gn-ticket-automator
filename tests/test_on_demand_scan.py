@@ -63,7 +63,7 @@ def test_a_completed_scan_clears_the_request(monkeypatch, registered_user):
     tasks.request_scan(USER_EMAIL)
     monkeypatch.setattr(tasks, "create_airtable_client", lambda key: FakeAirtable())
     monkeypatch.setattr(tasks, "send_conflict_email", lambda *a, **k: None)
-    monkeypatch.setattr(tasks.book_sessions, "delay", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "dispatch_booking", lambda *a, **k: None)
     monkeypatch.setattr(tasks, "dispatch_booking", lambda *a, **k: None)
 
     tasks.scan_user(USER_EMAIL)

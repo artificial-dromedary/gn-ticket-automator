@@ -12,8 +12,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import tasks
+from db import init_db
 from user_profiles import (DEFAULT_SCAN_FREQUENCY_HOURS, RETIRED_SCAN_FREQUENCIES,
-                           SCAN_FREQUENCY_CHOICES, _retire_removed_scan_frequencies,
+                           SCAN_FREQUENCY_CHOICES,
                            normalize_scan_frequency, user_manager)
 
 from test_tasks import USER_EMAIL, registered_user  # noqa: F401
@@ -267,7 +268,7 @@ def test_a_retired_interval_is_moved_to_what_replaced_it(registered_user):
     assert RETIRED_SCAN_FREQUENCIES == {5: 4}
     store_frequency_directly(USER_EMAIL, 5)
 
-    _retire_removed_scan_frequencies()
+    init_db()  # the migration runs at every startup
 
     assert user_manager.get_preferences(USER_EMAIL)["scan_frequency_hours"] == 4
 
@@ -276,6 +277,6 @@ def test_moving_retired_intervals_leaves_the_offered_ones_alone(registered_user)
     for hours in SCAN_FREQUENCY_CHOICES:
         store_frequency_directly(USER_EMAIL, hours)
 
-        _retire_removed_scan_frequencies()
+        init_db()
 
         assert user_manager.get_preferences(USER_EMAIL)["scan_frequency_hours"] == hours

@@ -7,7 +7,7 @@ import time
 import pytest
 
 import tasks
-from models import ConflictEmailLog, ScanResult, TaskLock, User
+from models import ConflictEmailLog, ScanResult, TaskLock
 from db import SessionLocal
 from sqlalchemy import select
 from ticket_submission_log import TicketSubmissionLog
@@ -102,7 +102,7 @@ def wired(monkeypatch, registered_user):
     monkeypatch.setattr(tasks, "create_airtable_client", lambda key: airtable)
     monkeypatch.setattr(tasks, "send_conflict_email",
                         lambda email, sessions: calls["conflict_emails"].append(list(sessions)))
-    monkeypatch.setattr(tasks.book_sessions, "delay",
+    monkeypatch.setattr(tasks, "dispatch_booking",
                         lambda email, ids, manual=False: (
                             calls["booked_ids"].append(list(ids)),
                             calls["manual_flags"].append(manual)))
@@ -243,7 +243,7 @@ def test_run_scheduled_scan_only_enqueues_opted_in_users(monkeypatch, registered
     })
 
     enqueued = []
-    monkeypatch.setattr(tasks.scan_user, "delay", lambda email: enqueued.append(email))
+    monkeypatch.setattr(tasks, "dispatch_scan", lambda email: enqueued.append(email))
 
     tasks.run_scheduled_scan()
 
