@@ -317,8 +317,8 @@ def send_zoom_notices_sent_email(to_email, notices, subject_prefix="GN Ticket Au
         return
     divider = "-" * 60
     lines = [
-        f"These overlapping sessions were handled automatically. The class below joins "
-        f"by Zoom, a host note was added in Airtable, and the session was booked as usual.",
+        "These overlapping sessions were handled automatically. The class below joins "
+        "by Zoom, a host note was added in Airtable, and the session was booked as usual.",
         "",
     ]
     for notice in notices:
