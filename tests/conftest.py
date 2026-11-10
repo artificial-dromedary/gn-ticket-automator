@@ -12,6 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _DB_FILE = os.path.join(tempfile.mkdtemp(prefix="gn_test_"), "test.db")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_DB_FILE}")
 os.environ.setdefault("APP_ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
+# Scan tests are about holding conflicts back; the tests for writing to teachers
+# automatically switch it on themselves.
+os.environ.setdefault("AUTO_SEND_CONFLICT_EMAILS", "0")
 
 import pytest  # noqa: E402
 
