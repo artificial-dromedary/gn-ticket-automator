@@ -663,6 +663,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <input type="checkbox" name="auto_booking_enabled" value="yes" {% if auto_booking_enabled %}checked{% endif %}>
           Enable auto-booking
         </label>
+        {% if scan_frequency_choices %}
         <label style="margin-right: 20px;">
           Check for sessions:
           <select name="scan_frequency_hours">
@@ -673,6 +674,7 @@ document.addEventListener('DOMContentLoaded', function() {
             {% endfor %}
           </select>
         </label>
+        {% endif %}
         <span style="color: #555; font-size: 0.9em;">
           Runs {{ auto_scan_time }}. Upcoming sessions with no conflicts are booked automatically;
           anything with a conflict is emailed to you instead.

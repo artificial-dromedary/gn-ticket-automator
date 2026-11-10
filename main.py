@@ -449,7 +449,8 @@ def gn_ticket_page():
             lookahead_label=lookahead_label,
             auto_booking_enabled=auto_booking_enabled,
             scan_frequency_hours=scan_frequency_hours,
-            scan_frequency_choices=SCAN_FREQUENCY_CHOICES,
+            # Fixed scan hours apply to everyone, so there is no interval to pick.
+            scan_frequency_choices=() if tasks.FIXED_SCAN_HOURS else SCAN_FREQUENCY_CHOICES,
             notification_email=notification_email,
             account_email=user['email'],
             manual_booking_enabled=MANUAL_BOOKING_ENABLED,
@@ -828,9 +829,12 @@ def update_preferences():
         "buffer_after": int(request.form.get("buffer_after", 10) or 0),
         "window_past_days": int(request.form.get("window_past_days", 14) or 0),
         "auto_booking_enabled": request.form.get("auto_booking_enabled") == "yes",
-        "scan_frequency_hours": normalize_scan_frequency(request.form.get("scan_frequency_hours")),
         "notification_email": request.form.get("notification_email"),
     }
+    # Absent when fixed scan hours hide the picker; keep the stored value rather
+    # than resetting it to the default.
+    if "scan_frequency_hours" in request.form:
+        prefs["scan_frequency_hours"] = normalize_scan_frequency(request.form.get("scan_frequency_hours"))
     # The look-ahead lives on the slider, not in this form. Only write it when it was
     # actually submitted, or saving settings would snap the slider back to the default.
     if "window_future_days" in request.form:

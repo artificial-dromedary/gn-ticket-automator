@@ -1,5 +1,5 @@
 # Two services from one image: the web service for the dashboard, and a cron job
-# that does the hourly scan and booking. No queue, no broker, no long-running
+# that does the scheduled scan and booking. No queue, no broker, no long-running
 # worker — the scan is a short process, and Render bills cron jobs per minute of
 # execution. The database lock table keeps overlapping runs apart.
 
@@ -40,6 +40,14 @@ envVarGroups:
       # which is DISPLAY_TZ below.
       - key: AUTO_SCAN_TZ
         value: America/New_York
+      # Everyone opted in is scanned at these local hours (AUTO_SCAN_TZ), weekdays
+      # only, and the per-user interval picker is hidden. Clear SCAN_HOURS to go back
+      # to per-user intervals — and put the cron schedule back to hourly with it.
+      - key: SCAN_HOURS
+        value: "7,17"
+      - key: SCAN_WEEKDAYS_ONLY
+        value: "1"
+      # Only used when SCAN_HOURS is empty.
       # The hour every scan interval is counted out from, in AUTO_SCAN_TZ. Daily
       # users land on it, twice-daily users on it and twelve hours later, and so
       # on. Without an anchor the hour would be whenever a user's first scan
@@ -51,7 +59,8 @@ envVarGroups:
       # only says when the scheduled scan fires.
       - key: DISPLAY_TZ
         value: America/Edmonton
-      # End-of-day summary: the first hourly run at or after this local hour sends it.
+      # End-of-day summary: the first scheduled run at or after this local hour sends
+      # it — the 5pm scan, after it has booked.
       - key: DAILY_SUMMARY_HOUR
         value: "17"
       - key: DAILY_SUMMARY_TZ
@@ -84,7 +93,17 @@ services:
   - type: web
     name: gn-ticket-web
     runtime: docker
-    plan: starter
+    # Free: this service only serves the dashboard and calls the Render API; Chrome
+    # and booking run in the cron job. What that costs, from render.com/docs/free:
+    # - It sleeps after 15 minutes without a request; the next visit takes about a
+    #   minute to wake it. Scans don't need it awake.
+    # - It cannot send mail on ports 465/587. It sends none: the only mail it would
+    #   send is the manual-booking summary, and manual booking is off below.
+    # - It may restart at any time and the disk is wiped when it does. Sessions are
+    #   in Postgres, so nobody is signed out.
+    # - 750 free instance hours per workspace per month, shared with any other free
+    #   service in the workspace; one service around the clock is at most 744.
+    plan: free
     dockerfilePath: ./Dockerfile
     # The start command is the Dockerfile's CMD; it reads $PORT.
     healthCheckPath: /
@@ -112,16 +131,15 @@ services:
   - type: cron
     name: gn-ticket-scan
     runtime: docker
-    # 2 GB, so Chrome has room. Cron jobs bill per minute of execution, so the larger
-    # instance costs cents per month at one short run per day.
+    # 2 GB, so Chrome has room. Cron jobs bill per minute of execution.
     plan: standard
     dockerfilePath: ./Dockerfile
-    # Fires hourly and scans only the users whose slot has come round, so per-person
-    # frequency (1/4/12/24h) is a dashboard setting rather than a schedule change.
-    # A run with nobody due exits in seconds, and cron jobs bill per minute.
-    # The hourly tick is what an "every hour" user needs; every other interval is
-    # counted out from SCAN_ANCHOR_HOUR and answers "due" on its own share of them.
-    schedule: "0 * * * *"
+    # 7am and 5pm Eastern, Monday to Friday (SCAN_HOURS). The schedule is UTC and
+    # Eastern moves an hour with daylight saving, so this fires at both UTC hours
+    # each can fall on — 11/12 for 7am, 21/22 for 5pm — and the run whose local hour
+    # isn't in SCAN_HOURS finds nobody due and exits in seconds. "Run scan now"
+    # starts this job at any time, and scans whoever asked.
+    schedule: "0 11,12,21,22 * * 1-5"
     dockerCommand: python run_scan.py
     envVars:
       - fromGroup: gn-ticket-shared
