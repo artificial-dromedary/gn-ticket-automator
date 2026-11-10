@@ -57,8 +57,8 @@ BOOK_LOCK_TTL = LOCK_TTL
 # a run gets killed rather than how two runs finish faster.
 BOOKING_SLOT = "booking-slot"
 
-# The end-of-day summary. The job fires hourly and sends it on the first run at or
-# after this local hour, once per day.
+# The end-of-day summary. The scheduled job sends it on the first run at or after
+# this local hour, once per day.
 DAILY_SUMMARY_HOUR = int(os.getenv("DAILY_SUMMARY_HOUR", "17"))
 DAILY_SUMMARY_TZ = os.getenv("DAILY_SUMMARY_TZ", "America/New_York")
 
@@ -81,6 +81,35 @@ SCAN_ANCHOR_HOUR = int(os.getenv("SCAN_ANCHOR_HOUR", "9"))
 logger = logging.getLogger(__name__)
 
 
+def _parse_scan_hours(raw):
+    hours = set()
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            hour = int(part)
+        except ValueError:
+            hour = -1
+        if 0 <= hour <= 23:
+            hours.add(hour)
+        else:
+            logger.warning("Ignoring SCAN_HOURS entry %r: not an hour from 0 to 23.", part)
+    return tuple(sorted(hours))
+
+
+# Fixed scan times, as local hours in SCAN_TZ: "7,17" scans everyone opted in at
+# 7am and 5pm. When set, the per-user interval is ignored and the dashboard stops
+# offering it; when empty, each user's interval applies as before. Render's cron
+# schedule is in UTC, so the job fires at both UTC hours an Eastern hour can fall
+# on and only the tick that lands on the local hour scans — which is what carries
+# the times through a daylight saving change.
+FIXED_SCAN_HOURS = _parse_scan_hours(os.getenv("SCAN_HOURS", ""))
+
+# With fixed hours, skip Saturday and Sunday (local to SCAN_TZ).
+SCAN_WEEKDAYS_ONLY = os.getenv("SCAN_WEEKDAYS_ONLY", "").strip().lower() in ("1", "true", "yes")
+
+
 def scan_hours(frequency_hours):
     """The local hours a user on this interval is scanned at.
 
@@ -99,6 +128,13 @@ def _clock(hour):
 
 def auto_scan_time_label(frequency_hours=None):
     """Human-readable description of when the scheduled scan runs."""
+    if FIXED_SCAN_HOURS:
+        zone = datetime.now(_scan_zone()).strftime("%Z")
+        clocks = [_clock(hour) for hour in FIXED_SCAN_HOURS]
+        times = clocks[0] if len(clocks) == 1 else f"{', '.join(clocks[:-1])} and {clocks[-1]}"
+        days = "weekdays" if SCAN_WEEKDAYS_ONLY else "every day"
+        return f"{days} at {times} {zone}".strip()
+
     hours = frequency_hours or DEFAULT_SCAN_FREQUENCY_HOURS
     if hours == 1:
         return "every hour"
@@ -608,6 +644,9 @@ def user_is_due(user_email, now=None):
     if has_pending_request(user_email):
         return True
 
+    if FIXED_SCAN_HOURS:
+        return _fixed_scan_is_due(last_scan_at(user_email), now or utcnow())
+
     prefs = user_manager.get_preferences(user_email) or {}
     hours = prefs.get("scan_frequency_hours") or DEFAULT_SCAN_FREQUENCY_HOURS
 
@@ -628,6 +667,25 @@ def _scan_zone():
     except Exception:
         logger.warning("Unknown AUTO_SCAN_TZ %r; reading the schedule in UTC.", SCAN_TZ)
         return timezone.utc
+
+
+def _fixed_scan_is_due(previous, now):
+    """Whether `now` (naive UTC) is a fixed scan time not yet scanned for.
+
+    Unlike the interval schedule there is no catch-up: the cron only fires around
+    the fixed hours, so a missed run is picked up at the next one.
+    """
+    local_now = now.replace(tzinfo=timezone.utc).astimezone(_scan_zone())
+    if SCAN_WEEKDAYS_ONLY and local_now.weekday() >= 5:
+        return False
+    if local_now.hour not in FIXED_SCAN_HOURS:
+        return False
+    if previous is None:
+        return True
+    if previous.tzinfo is not None:
+        previous = previous.replace(tzinfo=None)
+    slot = local_now.replace(minute=0, second=0, microsecond=0)
+    return previous < slot.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _scheduled_scan_is_due(previous, now, hours):
