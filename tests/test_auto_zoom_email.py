@@ -60,7 +60,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(tasks, "send_conflict_email",
                         lambda to, sessions: calls["conflicts"].append(list(sessions)))
     monkeypatch.setattr(tasks, "send_booking_summary_email", lambda *a, **k: None)
-    monkeypatch.setattr(tasks.book_sessions, "delay",
+    monkeypatch.setattr(tasks, "dispatch_booking",
                         lambda email, ids, manual=False: calls["booked"].append(sorted(ids)))
     return calls
 
