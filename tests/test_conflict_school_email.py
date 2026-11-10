@@ -41,34 +41,43 @@ def test_the_draft_matches_the_wording_sent_to_teachers():
     assert teacher_conflict_email(beads) == (
         "Hi there,\n\n"
         "I just wanted to let you know that there are two sessions overlapping for "
-        "your school. In most cases, as long as your internet is pretty reliable, you "
-        "can connect from the classroom via Zoom (instead of the Cisco videoconference "
-        "machine). If you've had trouble with Zoom and video streaming in the past, "
-        "let me know and we can rebook your session. Otherwise, just use the Zoom link "
-        "in your classroom and you don't need to do anything.\n\n"
-        "The two sessions are:\n\n"
-        "• Beam Paints Watercolour - Fish (Frederick Addae): Thursday, June 4 at 10:00 AM EDT\n"
-        "• Blueberry Beading (Nicole King): Thursday, June 4 at 10:30 AM EDT"
+        "your school for June 4 when you have your Blueberry Beading session. In most "
+        "cases, as long as your internet is pretty reliable, you can connect from the "
+        "classroom via Zoom (instead of the Cisco videoconference machine). If you've "
+        "had trouble with Zoom and video streaming in the past, let me know and we can "
+        "rebook your session. Otherwise, just use the Zoom link in your classroom and "
+        "you don't need to do anything."
     )
 
 
-def test_both_sessions_are_listed_in_start_order():
-    """The subject only carries a date, so the body has to identify the bookings."""
+def test_the_draft_names_the_recipients_own_session_from_either_side():
+    """Read from the session that keeps the machine, it still names the moving one."""
     fish, beads = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
     check_for_time_conflicts([fish, beads], [], now=_now())
 
-    draft = teacher_conflict_email(beads)
-    assert draft.index("Beam Paints") < draft.index("Blueberry Beading")
+    assert teacher_conflict_email(fish) == teacher_conflict_email(beads)
+    assert "Beam Paints" not in teacher_conflict_email(fish)
 
 
-def test_a_session_with_two_teachers_lists_them_both():
-    fish, beads = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
-    beads.teachers = ["Nicole King", "Arlene Vasquez"]
-    beads.teacher_emails = ["nicoleking@example.com", "avasquez@example.com"]
-    check_for_time_conflicts([fish, beads], [], now=_now())
+def test_one_teacher_with_two_clashes_gets_one_email_naming_both_dates():
+    first = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
+    later = _pair("2026-05-01T10:00:00.000Z", "2026-05-02T10:00:00.000Z")
+    later_fish, later_beads = later
+    later_beads.s_id, later_fish.s_id = "recBeads2", "recFish2"
+    later_beads.title = "Medicine Bag Making"
+    for s in later:
+        s.start_time += timedelta(days=13)
+    check_for_time_conflicts(list(first), [], now=_now())
+    check_for_time_conflicts(list(later), [], now=_now())
 
-    assert ("• Blueberry Beading (Nicole King and Arlene Vasquez): "
-            "Thursday, June 4 at 10:30 AM EDT") in teacher_conflict_email(beads)
+    notice = emailer.zoom_notice([later_beads, first[1]])
+    assert notice["to"] == "nicoleking@example.com"
+    assert notice["subject"] == (
+        "FYI - Connect via Zoom for June 4 and June 17 Connected North sessions")
+    assert ("for June 4 when you have your Blueberry Beading session, and again for "
+            "June 17 when you have your Medicine Bag Making session.") in notice["body"]
+    assert "rebook your sessions." in notice["body"]
+    assert notice["session_ids"] == ["recBeads", "recBeads2"]
 
 
 def test_only_the_teacher_who_would_move_to_zoom_is_written_to():
@@ -165,7 +174,6 @@ def test_the_daily_summary_reads_booked_then_conflicts_then_teachers_then_draft(
              body.index("To: Nicole King <nicoleking@example.com>"),
              body.index("Hi there,"), body.index("REMOVED, NOT BEING BOOKED")]
     assert order == sorted(order)
-    # Named in the listing, but never a recipient.
+    # The class keeping the machine is not written to.
     assert "frederickaddae@example.com" not in body
-    assert "Frederick Addae" in body
 

@@ -22,7 +22,8 @@ from sqlalchemy.exc import IntegrityError
 from airtable_integration import create_airtable_client
 from conflict import check_for_time_conflicts, conflict_payload
 from db import SessionLocal
-from emailer import send_booking_summary_email, send_conflict_email, send_daily_summary_email
+from emailer import (send_booking_summary_email, send_conflict_email, send_daily_summary_email,
+                     send_zoom_notice, send_zoom_notices_sent_email, zoom_notice)
 from models import (ConflictEmailLog, ConflictResolution, DailySummaryLog, ScanRequest,
                     ScanResult, SessionExclusion, TaskLock, TicketSubmission, User, utcnow)
 from ticket_submission_log import ticket_log
@@ -452,6 +453,70 @@ def _email_new_conflicts(user_email, conflict_payload):
     return unreported
 
 
+# A clash between two booked sessions at one school is settled the same way almost
+# every time: one class joins by Zoom and the other keeps the Cisco machine. So
+# rather than hold the session back and ask the person to write to the teacher, the
+# scan writes to the teacher itself, notes it for the host, and books as usual.
+# Set AUTO_SEND_CONFLICT_EMAILS=0 to go back to flagging them.
+def auto_send_conflict_emails_enabled():
+    return os.getenv("AUTO_SEND_CONFLICT_EMAILS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _resolve_by_zoom(user_email, conflicts, airtable_client):
+    """Email the teachers of the time clashes in `conflicts` and mark them settled.
+
+    Returns (resolved_sessions, notices_sent). A session that cannot be put to a
+    teacher (no email, not a time clash) is left as a conflict. One teacher with
+    several clashes gets one email. The email goes first: if it fails nothing else
+    happens and the session stays flagged, so it is retried next scan. Once it is
+    sent, the clash is recorded as resolved even if the host note fails, because a
+    second copy of the email is worse than a missing note.
+    """
+    by_recipient = {}
+    for session in conflicts:
+        notice = zoom_notice([session])
+        if not notice:
+            continue
+        by_recipient.setdefault(notice["to"].strip().lower(), []).append(session)
+
+    resolved, sent = [], []
+    noted = set()
+    for sessions in by_recipient.values():
+        notice = zoom_notice(sessions)
+        if not notice:
+            continue
+        try:
+            send_zoom_notice(notice)
+        except Exception as exc:
+            logger.error("Could not send Zoom email to %s: %s", notice["to"], exc)
+            continue
+        sent.append(notice)
+
+        for moving_id in notice["session_ids"]:
+            if moving_id in noted:
+                continue
+            noted.add(moving_id)
+            try:
+                airtable_client.append_session_note(moving_id, HOST_NOTES_FIELD,
+                                                    ZOOM_RESOLUTION_NOTE)
+            except Exception as exc:
+                logger.error("Zoom email sent but host note failed for %s: %s", moving_id, exc)
+
+        for session in sessions:
+            other_id = getattr(session, "conflict_other_id", None) or ""
+            try:
+                record_conflict_resolution(user_email, session.s_id, other_id)
+            except Exception as exc:
+                logger.error("Could not record resolution for %s: %s", session.s_id, exc)
+            session.is_conflict = False
+            session.conflict_type = None
+            session.conflict_details = ""
+            session.conflict_resolved = True
+            resolved.append(session)
+
+    return resolved, sent
+
+
 def _record_scan(user_email, candidate_sessions, conflict_payload, clean_sessions):
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.email == user_email.strip().lower())).scalar_one_or_none()
@@ -761,6 +826,11 @@ def _scan_user(user_email):
     # about as a conflict either — the decision has already been made.
     excluded = excluded_session_ids(user_email)
     conflicts = [s for s in candidate_sessions if s.is_conflict and s.s_id not in excluded]
+
+    zoom_notices = []
+    if conflicts and auto_send_conflict_emails_enabled():
+        _, zoom_notices = _resolve_by_zoom(user_email, conflicts, airtable_client)
+        conflicts = [s for s in conflicts if s.is_conflict]
     clean = [s for s in candidate_sessions
              if not s.is_conflict and s.s_id not in excluded]
     conflicts_out = [conflict_payload(s) for s in conflicts]
@@ -774,6 +844,12 @@ def _scan_user(user_email):
     manual = has_pending_request(user_email)
     # Satisfied: this scan covers whatever prompted the request.
     clear_scan_request(user_email)
+
+    if zoom_notices:
+        try:
+            send_zoom_notices_sent_email(user_manager.notification_email(user_email), zoom_notices)
+        except Exception as exc:
+            logger.error("Could not send Zoom email report to %s: %s", user_email, exc)
 
     # Conflicts are reported but never block the sessions that are fine.
     if conflicts_out:

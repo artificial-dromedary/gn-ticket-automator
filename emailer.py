@@ -169,6 +169,7 @@ def _conflict_pair(session):
     other_names = _people(session, "conflict_other_teachers", "conflict_other_teacher")
 
     this = {
+        "id": _field(session, "session_id") or _field(session, "s_id") or "",
         "title": _field(session, "title") or "Session",
         "names": this_names,
         "teacher": _join_names(this_names, "the teacher"),
@@ -177,6 +178,7 @@ def _conflict_pair(session):
         "created": _field(session, "created_at") or "",
     }
     other = {
+        "id": _field(session, "conflict_session_id") or _field(session, "conflict_other_id") or "",
         "title": _field(session, "conflict_other_title") or "Session",
         "names": other_names,
         "teacher": _join_names(other_names, "the other teacher"),
@@ -213,43 +215,122 @@ def teacher_conflict_recipients(session):
     return moving["email"] if moving else ""
 
 
+def long_date(value, tz=None, fallback="an upcoming date"):
+    """'November 13' in the school's own zone, for the body of a teacher email."""
+    if not value:
+        return fallback
+    moment = value
+    if isinstance(moment, str):
+        try:
+            moment = datetime.fromisoformat(moment.replace("Z", "+00:00"))
+        except ValueError:
+            return fallback
+    if not isinstance(moment, datetime):
+        return fallback
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    try:
+        local = moment.astimezone(ZoneInfo(tz or DISPLAY_TZ))
+    except (ZoneInfoNotFoundError, ValueError):
+        local = moment.astimezone(ZoneInfo(DISPLAY_TZ))
+    return f"{local:%B} {local.day}"
+
+
+def zoom_notice(sessions):
+    """Who, subject and body for one teacher, covering one or more of their clashes.
+
+    `sessions` are conflicted sessions (payload dicts or live objects) whose moving
+    side is this teacher's booking. One teacher with two clashes gets one email
+    naming both dates, not two emails. Returns None when nothing in the list is a
+    clash that can be put to a teacher.
+    """
+    items = []
+    seen = set()
+    for session in sessions:
+        moving = _moving_side(session)
+        if not moving or not moving["email"]:
+            continue
+        key = moving["id"] or (moving["title"], moving["start"])
+        if key in seen:
+            continue
+        seen.add(key)
+        tz = _field(session, "timezone") or None
+        items.append((moving["start"] or "", moving, tz))
+    if not items:
+        return None
+
+    items.sort(key=lambda item: item[0])
+    moving = items[0][1]
+    clauses = [f"{long_date(start, tz)} when you have your {m['title']} session"
+               for start, m, tz in items]
+    if len(clauses) == 1:
+        when = clauses[0]
+    else:
+        when = ", ".join(clauses[:-1]) + f", and again for {clauses[-1]}"
+    dates = [short_date(start, tz) for start, _, tz in items]
+    plural = len(items) > 1
+    subject = (f"FYI - Connect via Zoom for {_join_names(dates)} Connected North "
+               f"session{'s' if plural else ''}")
+    body = (
+        "Hi there,\n\n"
+        "I just wanted to let you know that there are two sessions overlapping for "
+        f"your school for {when}. In most cases, as long as your internet is pretty "
+        "reliable, you can connect from the classroom via Zoom (instead of the Cisco "
+        "videoconference machine). If you've had trouble with Zoom and video streaming "
+        "in the past, let me know and we can rebook your "
+        f"session{'s' if plural else ''}. Otherwise, just use the Zoom link in your "
+        "classroom and you don't need to do anything."
+    )
+    return {
+        "to": moving["email"],
+        "teacher": moving["teacher"],
+        "subject": subject,
+        "body": body,
+        "session_ids": [m["id"] for _, m, _ in items if m["id"]],
+    }
+
+
 def teacher_conflict_subject(session):
     """'FYI - Connect via Zoom for Sept 24 Connected North session', or None."""
-    moving = _moving_side(session)
-    if not moving:
-        return None
-    when = short_date(moving["start"], _field(session, "timezone") or None)
-    return f"FYI - Connect via Zoom for {when} Connected North session"
+    notice = zoom_notice([session])
+    return notice["subject"] if notice else None
 
 
 def teacher_conflict_email(session):
-    """The copy/paste email to the teacher whose class would join by Zoom, or None.
+    """The email to the teacher whose class would join by Zoom, or None.
 
-    It goes to one teacher and asks nothing of the other, but it does list both
-    sessions: the reader has to be able to tell which of their bookings this is
-    about, and the subject only carries the date.
+    It goes to one teacher and asks nothing of the other. It names the date and
+    that teacher's own session, so they know which booking it is about.
     """
-    pair = _conflict_pair(session)
-    if not pair:
-        return None
-    by_time, _, _ = pair
-    tz = _field(session, "timezone") or None
+    notice = zoom_notice([session])
+    return notice["body"] if notice else None
 
-    listing = "\n".join(
-        f"\u2022 {s['title']} ({s['teacher']}): {school_datetime(s['start'], tz)}"
-        for s in by_time
-    )
-    return (
-        "Hi there,\n\n"
-        "I just wanted to let you know that there are two sessions overlapping for "
-        "your school. In most cases, as long as your internet is pretty reliable, you "
-        "can connect from the classroom via Zoom (instead of the Cisco videoconference "
-        "machine). If you've had trouble with Zoom and video streaming in the past, "
-        "let me know and we can rebook your session. Otherwise, just use the Zoom link "
-        "in your classroom and you don't need to do anything.\n\n"
-        "The two sessions are:\n\n"
-        f"{listing}"
-    )
+
+def send_zoom_notice(notice):
+    """Send a zoom_notice() to the teacher(s) on it."""
+    _send(notice["to"], notice["subject"], notice["body"])
+
+
+def send_zoom_notices_sent_email(to_email, notices, subject_prefix="GN Ticket Auto-Booking"):
+    """Tell the person which teachers were emailed automatically, and what was said."""
+    if not notices:
+        return
+    divider = "-" * 60
+    lines = [
+        "These overlapping sessions were handled automatically. The class below joins "
+        "by Zoom, a host note was added in Airtable, and the session was booked as usual.",
+        "",
+    ]
+    for notice in notices:
+        lines.append(f"To: {notice['teacher']} <{notice['to']}>")
+        lines.append(f"Subject: {notice['subject']}")
+        lines.append(divider)
+        lines.append(notice["body"])
+        lines.append(divider)
+        lines.append("")
+    count = len(notices)
+    _send(to_email, f"{subject_prefix}: {count} Zoom email{'s' if count != 1 else ''} sent "
+                    f"to teachers", "\n".join(lines))
 
 
 def _append_teacher_emails(lines, conflict_sessions):
