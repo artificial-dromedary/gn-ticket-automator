@@ -79,7 +79,9 @@ For each opted-in user whose slot has come round (`tasks.user_is_due`):
    overlapping an already-ticketed session at the same school, overlapping a
    ticket this tool already filed, or two candidates clashing with each other.
    Clashes the person has settled on the dashboard ("this class joins by Zoom")
-   are cleared; sessions they removed are held back.
+   are cleared; sessions they removed are held back. A clash is also cleared,
+   silently, when the teacher whose class would move to Zoom has completed five
+   or more sessions since August 1 (`GN_EXPERIENCED_TEACHER_SESSIONS`).
 3. Record the scan, email any conflicts not already reported, and book the rest.
 
 Booking (`tasks.submit_to_gn`) takes the single browser slot, a database-backed

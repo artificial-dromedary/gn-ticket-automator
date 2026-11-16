@@ -4,7 +4,7 @@ The answer is almost always the same: the class booked second joins by Zoom and 
 other keeps the Cisco machine. So the scan writes to that teacher itself, leaves the
 host a note, records the clash as settled and books the session like any other.
 """
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -30,6 +30,9 @@ class Airtable:
     def __init__(self, candidates):
         self._candidates = candidates
         self.notes = []
+        # Completed sessions this school year, by teacher email. Absent means none.
+        self.completed = {}
+        self.count_calls = []
 
     def get_booked_sessions(self, **kwargs):
         return self._candidates()
@@ -39,6 +42,13 @@ class Airtable:
 
     def append_session_note(self, session_id, field, note):
         self.notes.append((session_id, field, note))
+
+    def count_completed_sessions(self, email, since, limit):
+        self.count_calls.append((email, since, limit))
+        count = self.completed.get(email, 0)
+        if isinstance(count, Exception):
+            raise count
+        return min(count, limit)
 
 
 @pytest.fixture
@@ -107,3 +117,129 @@ def test_switched_off_it_flags_as_before(wired, monkeypatch):
 
     assert wired["teacher"] == []
     assert len(wired["conflicts"]) == 1
+
+
+# A teacher with five or more completed sessions since August 1 knows the drill, so
+# the overlap is not raised with anyone: no email, no note, no hold.
+
+def test_an_experienced_teacher_is_not_emailed_and_both_sessions_are_booked(wired):
+    wired["airtable"].completed["helycolina@example.com"] = 5
+
+    tasks._scan_user(USER_EMAIL)
+
+    assert wired["teacher"] == []
+    assert wired["report"] == []
+    assert wired["conflicts"] == []
+    assert wired["airtable"].notes == []
+    assert wired["booked"] == [["recFirst", "recSecond"]]
+    # Nothing recorded as resolved: it was never a conflict to resolve.
+    assert tasks.resolved_conflict_pairs(USER_EMAIL) == {}
+
+
+def test_four_completed_sessions_still_gets_the_email(wired):
+    wired["airtable"].completed["helycolina@example.com"] = 4
+
+    tasks._scan_user(USER_EMAIL)
+
+    assert len(wired["teacher"]) == 1
+    assert wired["teacher"][0]["to"] == "helycolina@example.com"
+
+
+def test_only_the_moving_teacher_is_counted(wired):
+    # The teacher keeping the Cisco machine is not the one who would be emailed.
+    wired["airtable"].completed["erikakozole@example.com"] = 20
+
+    tasks._scan_user(USER_EMAIL)
+
+    assert len(wired["teacher"]) == 1
+    assert {email for email, _, _ in wired["airtable"].count_calls} == {"helycolina@example.com"}
+
+
+def test_the_count_starts_on_august_first_of_this_school_year(wired):
+    tasks._scan_user(USER_EMAIL)
+
+    assert wired["airtable"].count_calls
+    _, since, limit = wired["airtable"].count_calls[0]
+    assert since == tasks.school_year_start()
+    assert limit == tasks.EXPERIENCED_TEACHER_SESSIONS == 5
+
+
+def test_if_airtable_cannot_count_the_email_still_goes(wired):
+    wired["airtable"].completed["helycolina@example.com"] = RuntimeError("airtable down")
+
+    tasks._scan_user(USER_EMAIL)
+
+    assert len(wired["teacher"]) == 1
+
+
+def test_an_experienced_teacher_is_not_flagged_even_with_auto_send_off(wired, monkeypatch):
+    monkeypatch.setenv("AUTO_SEND_CONFLICT_EMAILS", "0")
+    wired["airtable"].completed["helycolina@example.com"] = 7
+
+    tasks._scan_user(USER_EMAIL)
+
+    assert wired["teacher"] == []
+    assert wired["conflicts"] == []
+    assert wired["booked"] == [["recFirst", "recSecond"]]
+
+
+def _co_taught_clash():
+    first, second = _clash()
+    second.teachers = ["Hely Colina", "Sam Arnaq"]
+    second.teacher_emails = ["helycolina@example.com", "samarnaq@example.com"]
+    return tasks.check_for_time_conflicts([first, second], [], now=BASE_TIME)
+
+
+def test_co_teachers_are_not_waived_unless_all_of_them_qualify(wired):
+    wired["airtable"].completed["helycolina@example.com"] = 9
+
+    sessions = tasks.waive_experienced_teacher_conflicts(wired["airtable"], _co_taught_clash())
+
+    assert all(s.is_conflict for s in sessions)
+
+
+def test_co_teachers_are_waived_when_all_of_them_qualify(wired):
+    wired["airtable"].completed["helycolina@example.com"] = 9
+    wired["airtable"].completed["samarnaq@example.com"] = 5
+
+    sessions = tasks.waive_experienced_teacher_conflicts(wired["airtable"], _co_taught_clash())
+
+    assert not any(s.is_conflict for s in sessions)
+    assert all(s.conflict_other_id is None for s in sessions)
+
+
+@pytest.mark.parametrize("today, expected", [
+    (date(2026, 11, 16), date(2026, 8, 1)),
+    (date(2027, 3, 2), date(2026, 8, 1)),
+    (date(2026, 8, 1), date(2026, 8, 1)),
+    (date(2026, 7, 31), date(2025, 8, 1)),
+])
+def test_school_year_start(today, expected):
+    assert tasks.school_year_start(today) == expected
+
+
+def test_the_airtable_query_counts_this_teachers_completed_sessions():
+    from airtable_integration import create_airtable_client
+
+    client = create_airtable_client("k")
+    sent = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"records": [{"id": f"rec{i}"} for i in range(5)]}
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        sent.update(params)
+        return Response()
+    client.http.get = fake_get
+
+    assert client.count_completed_sessions(" Hely.Colina@Example.com ", date(2026, 8, 1), 5) == 5
+    formula = sent["filterByFormula"]
+    assert "{Status} = 'Completed'" in formula
+    assert "'2026-08-01'" in formula
+    assert "',hely.colina@example.com,'" in formula
+    assert "'Test'" in formula and "'PD Week'" in formula
+    assert sent["maxRecords"] == 5

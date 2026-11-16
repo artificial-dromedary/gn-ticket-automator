@@ -12,7 +12,7 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
@@ -20,10 +20,11 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 
 from airtable_integration import create_airtable_client
-from conflict import check_for_time_conflicts, conflict_payload
+from conflict import check_for_time_conflicts, conflict_payload, reset_conflict
 from db import SessionLocal
 from emailer import (send_booking_summary_email, send_conflict_email, send_daily_summary_email,
-                     send_zoom_notice, send_zoom_notices_sent_email, zoom_notice)
+                     send_zoom_notice, send_zoom_notices_sent_email, teacher_conflict_recipients,
+                     zoom_notice)
 from models import (ConflictEmailLog, ConflictResolution, DailySummaryLog, ScanRequest,
                     ScanResult, SessionExclusion, TaskLock, TicketSubmission, User, utcnow)
 from ticket_submission_log import ticket_log
@@ -401,7 +402,59 @@ def annotate_conflicts(airtable_client, candidate_sessions, user_email,
     historical_entries = ticket_log.get_entries(user_email)
     annotated = check_for_time_conflicts(candidate_sessions, existing_sessions, historical_entries)
     # A clash the person settled on the dashboard must not come back every scan.
-    return clear_resolved_conflicts(annotated, resolved_conflict_pairs(user_email))
+    annotated = clear_resolved_conflicts(annotated, resolved_conflict_pairs(user_email))
+    return waive_experienced_teacher_conflicts(airtable_client, annotated)
+
+
+# A teacher who has already run this many sessions this school year knows how to
+# join from the classroom by Zoom, so an overlap that would move their class is not
+# a conflict at all: no email, no host note, no hold, nothing on the dashboard. The
+# session is booked as if the clash were not there. 0 turns this off.
+EXPERIENCED_TEACHER_SESSIONS = int(os.getenv("GN_EXPERIENCED_TEACHER_SESSIONS", "5"))
+
+
+def school_year_start(today=None):
+    """August 1 of the current school year, read in SCAN_TZ."""
+    today = today or datetime.now(ZoneInfo(SCAN_TZ)).date()
+    return date(today.year if today.month >= 8 else today.year - 1, 8, 1)
+
+
+def waive_experienced_teacher_conflicts(airtable_client, sessions, today=None):
+    """Clear every time clash whose moving teacher has enough sessions behind them.
+
+    The moving teacher is the one the Zoom email would go to. A session with more
+    than one teacher is cleared only when every one of them qualifies, since the
+    email would otherwise reach someone who may need it. A teacher with no email
+    cannot be looked up and stays flagged, as before. If Airtable cannot answer,
+    the clash stays too, so the email still goes out: an extra FYI is cheaper than
+    a class that cannot connect.
+    """
+    if EXPERIENCED_TEACHER_SESSIONS <= 0:
+        return sessions
+    since = school_year_start(today)
+    verdicts = {}
+
+    def experienced(email):
+        if email not in verdicts:
+            try:
+                count = airtable_client.count_completed_sessions(
+                    email, since, limit=EXPERIENCED_TEACHER_SESSIONS)
+                verdicts[email] = count >= EXPERIENCED_TEACHER_SESSIONS
+            except Exception as exc:
+                logger.warning("Could not count completed sessions for %s: %s", email, exc)
+                verdicts[email] = False
+        return verdicts[email]
+
+    for session in sessions:
+        if getattr(session, "conflict_type", None) != "time":
+            continue
+        recipients = [e.strip().lower() for e in teacher_conflict_recipients(session).split(",")
+                      if e.strip()]
+        if recipients and all(experienced(e) for e in recipients):
+            logger.info("Clash on %s not flagged: %s has %d+ completed sessions since %s.",
+                        session.s_id, ", ".join(recipients), EXPERIENCED_TEACHER_SESSIONS, since)
+            reset_conflict(session)
+    return sessions
 
 
 def _conflict_key(entry):
