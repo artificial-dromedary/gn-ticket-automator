@@ -317,6 +317,46 @@ class AirtableIntegration:
                     len(sessions), len(school_names))
         return sessions
 
+    def count_completed_sessions(self, teacher_email, since, limit):
+        """How many sessions this teacher has completed since `since` (a date), up to `limit`.
+
+        Counted the way the base's own "Completed TY" field on Teachers counts them:
+        status Completed, not a Test booking, not tagged PD Week. That field's dates
+        are edited by hand each August, so the start date is passed in here instead
+        of read from it. Stops at `limit`: callers only need to know whether a
+        teacher has reached a number, not the full total.
+        """
+        email = str(teacher_email or "").strip().lower()
+        if not email or limit <= 0:
+            return 0
+        formula = (
+            "AND("
+            "{Status} = 'Completed', "
+            "NOT(IS_BEFORE({Session Start Date/Time}, "
+            f"DATETIME_PARSE({quote(since.isoformat())}, 'YYYY-MM-DD'))), "
+            # Wrapped in commas so one address cannot match inside a longer one.
+            f"FIND({quote(',' + email + ',')}, "
+            "',' & LOWER(ARRAYJOIN({Teacher Email}, ',')) & ',') > 0, "
+            "NOT(FIND('Test', {Grade(s)} & '') > 0), "
+            "NOT(FIND('PD Week', {Tags} & '') > 0)"
+            ")"
+        )
+        params = {
+            "filterByFormula": formula,
+            "fields[]": "Status",
+            "pageSize": min(int(limit), 100),
+            "maxRecords": int(limit),
+        }
+        try:
+            response = self.http.get(self.base_url, headers=self.headers, params=params,
+                                     timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            body = getattr(getattr(e, "response", None), "text", "")
+            logger.error("Airtable completed-session count failed: %s %s", e, body[:300])
+            raise Exception(f"Failed to count completed sessions: {e}")
+        return min(len(response.json().get("records", [])), int(limit))
+
     def get_record(self, session_id):
         """One record's fields, fresh from Airtable."""
         url = f"{self.base_url}/{session_id}"
